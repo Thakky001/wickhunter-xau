@@ -1,0 +1,163 @@
+const { sendSignal } = require('../services/telegram');
+const { findFVG, findOrderBlock, checkPriceActionInZone, checkChoCh } = require('./smcMath');
+const { getCandles } = require('../services/twelveData');
+
+const STATES = {
+    SCANNING: 'SCANNING',
+    WAITING_WICK_BREAK: 'WAITING_WICK_BREAK',
+    TRIGGERED: 'TRIGGERED'
+};
+
+let currentState = STATES.SCANNING;
+let referenceWickPrice = 0;
+let cancelPrice = 0; // เปลี่ยนชื่อตัวแปรให้ตรงกับความหมาย (ขอบโซน)
+let signalDirection = '';
+
+let cachedH1Candles = [];
+let lastH1FetchHour = -1;
+
+function isMarketOpen() {
+    const now = new Date();
+    const day = now.getUTCDay();
+    const hour = now.getUTCHours();
+
+    if (day === 6) {
+        return false;
+    }
+    if (day === 0) {
+        return hour >= 22;
+    }
+    if (day === 5) {
+        return hour < 22;
+    }
+
+    return true;
+}
+
+async function checkMarketLogic() {
+    if (!isMarketOpen()) {
+        console.log("💤 ตลาดทองคำปิดทำการ บอทเข้าสู่โหมดพักผ่อน...");
+        return;
+    }
+
+    if (currentState === STATES.SCANNING) {
+        const currentHour = new Date().getHours();
+        if (cachedH1Candles.length === 0 || currentHour !== lastH1FetchHour) {
+            cachedH1Candles = await getCandles('60', 50);
+            lastH1FetchHour = currentHour;
+            if (cachedH1Candles.length > 0) {
+                console.log(`🔄 [SMC Engine]: อัปเดตข้อมูลแท่งเทียน H1 ใหม่ (ชั่วโมงที่ ${currentHour})`);
+            }
+        }
+
+        const m5Candles = await getCandles('5', 15);
+
+        if (cachedH1Candles.length === 0 || m5Candles.length < 2) {
+            return;
+        }
+
+        const closedH1Candles = cachedH1Candles.slice(0, -1);
+
+        const fvgs = findFVG(closedH1Candles);
+        const obs = findOrderBlock(closedH1Candles);
+        const allZones = [...fvgs, ...obs];
+
+        const closedM5Candle = m5Candles[m5Candles.length - 2];
+        const closedM5Array = m5Candles.slice(0, -1); 
+
+        for (let zone of allZones) {
+            const paResult = checkPriceActionInZone(closedM5Candle, zone);
+
+            if (paResult.isValid) {
+                const hasChoCh = checkChoCh(closedM5Array, paResult.direction);
+                if (!hasChoCh) {
+                    console.log(`⏭️ [SMC Engine]: พบ PA ในโซน แต่ยังไม่เกิด ChoCh ข้ามไปก่อน`);
+                    continue; // ข้ามโซนนี้ รอโซนถัดไป
+                }
+                
+                referenceWickPrice = paResult.triggerWickPrice;
+                cancelPrice = paResult.cancelPrice;
+                signalDirection = paResult.direction;
+                currentState = STATES.WAITING_WICK_BREAK;
+
+                // คำนวณระยะความเสี่ยง (Risk) และเป้าหมาย TP (Reward) 
+                const risk = Math.abs(referenceWickPrice - cancelPrice);
+                const tp1 = signalDirection === 'BUY' ? referenceWickPrice + (risk * 2) : referenceWickPrice - (risk * 2);
+
+                console.log(`\n🔍 [SMC Engine]: กราฟชนโซน ${zone.name} H1`);
+                console.log(`🎯 [SMC Engine]: เกิด PA ปิดโซนสำเร็จ รอเคลียร์ไส้ที่: ${referenceWickPrice}`);
+
+                const previewMsg = `⏳ <b>เตรียมตัว! พบการกลับตัวในโซน ${zone.name} H1</b>\n\n` +
+                    `ดักรอการ <b>เบรกปลายไส้ (M5)</b> ฝั่ง ${signalDirection}\n\n` +
+                    `📍 <b>Entry:</b> ${referenceWickPrice.toFixed(2)}\n` +
+                    `🛑 <b>SL (Zone Edge):</b> ${cancelPrice.toFixed(2)}\n` +
+                    `🎯 <b>TP (1:2):</b> ${tp1.toFixed(2)}`;
+
+                await sendSignal(previewMsg);
+                break;
+            }
+        }
+    }
+}
+
+async function processTickData(currentPrice) {
+    if (currentState === STATES.WAITING_WICK_BREAK) {
+        let isBreakout = false;
+        let isInvalidated = false;
+
+        if (signalDirection === 'BUY') {
+            if (currentPrice > referenceWickPrice) isBreakout = true;
+            if (currentPrice < cancelPrice) isInvalidated = true; // ถ้าราคาร่วงหลุดขอบโซนล่าง
+        } else if (signalDirection === 'SELL') {
+            if (currentPrice < referenceWickPrice) isBreakout = true;
+            if (currentPrice > cancelPrice) isInvalidated = true; // ถ้าราคาพุ่งทะลุขอบโซนบน
+        }
+
+        if (isInvalidated) {
+            currentState = STATES.SCANNING;
+            console.log(`❌ [SMC Engine]: กราฟผิดทาง! ราคาทะลุขอบโซน (${cancelPrice}) ระบบกลับไป SCANNING`);
+            await sendSignal(`❌ <b>ยกเลิกสัญญาณ ${signalDirection}</b>\n\nกราฟผิดทาง ทะลุจุด SL ขอบโซนที่ <b>${cancelPrice.toFixed(2)}</b> ก่อนการเบรก ระบบกลับสู่โหมดสแกนหาโซนใหม่...`);
+            return;
+        }
+
+        if (isBreakout) {
+            currentState = STATES.TRIGGERED;
+
+            const slPrice = cancelPrice;
+            const risk = Math.abs(referenceWickPrice - slPrice);
+            let tp1Price = 0;
+            let tp2Price = 0;
+
+            if (signalDirection === 'BUY') {
+                tp1Price = referenceWickPrice + (risk * 2);
+                tp2Price = referenceWickPrice + (risk * 3);
+            } else if (signalDirection === 'SELL') {
+                tp1Price = referenceWickPrice - (risk * 2);
+                tp2Price = referenceWickPrice - (risk * 3);
+            }
+
+            const msg = `🔥 <b>WickHunter XAU | SIGNAL TRIGGERED</b> 🔥\n\n` +
+                `✅ <b>Direction:</b> ${signalDirection}\n` +
+                `✅ <b>Action:</b> เคลียร์ไส้เทียนสำเร็จ!\n\n` +
+                `📍 <b>Entry Price:</b> ${referenceWickPrice.toFixed(2)}\n` +
+                `🛑 <b>Stop Loss:</b> ${slPrice.toFixed(2)}\n` +
+                `🎯 <b>TP 1 (RR 1:2):</b> ${tp1Price.toFixed(2)}\n` +
+                `🎯 <b>TP 2 (RR 1:3):</b> ${tp2Price.toFixed(2)}\n\n` +
+                `🚀 <b>Current Price:</b> ${currentPrice.toFixed(2)}`;
+
+            await sendSignal(msg);
+            console.log(`🟢 [SMC Engine]: สัญญาณถูกส่งแล้ว! รีเซ็ตระบบกลับสู่โหมดสแกนใน 5 นาที...`);
+
+            setTimeout(() => {
+                currentState = STATES.SCANNING;
+                console.log("🔄 [SMC Engine]: กลับสู่โหมด SCANNING รอโซนถัดไป");
+            }, 300000);
+        }
+    }
+}
+
+setInterval(checkMarketLogic, 120000);
+
+checkMarketLogic();
+
+module.exports = { processTickData };
