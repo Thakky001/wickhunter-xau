@@ -13,6 +13,7 @@
     "axios": "^1.16.1",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "googleapis": "^172.0.0",
     "ws": "^8.20.1",
     "yahoo-finance2": "^3.14.1"
   }

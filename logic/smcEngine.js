@@ -1,6 +1,8 @@
 const { sendSignal } = require('../services/telegram');
 const { findFVG, findOrderBlock, checkPriceActionInZone, checkChoCh } = require('./smcMath');
 const { getCandles } = require('../services/twelveData');
+const dashboardState = require('../services/dashboardState');
+const sheets = require('../services/sheets');
 
 const STATES = {
     SCANNING: 'SCANNING',
@@ -74,6 +76,24 @@ async function checkMarketLogic() {
         console.log(`   🕯️  M5 แท่งปิดล่าสุด | O:${closedM5Candle.open.toFixed(2)} H:${closedM5Candle.high.toFixed(2)} L:${closedM5Candle.low.toFixed(2)} C:${closedM5Candle.close.toFixed(2)}`);
         // ───────────────────────────────────────────────────────────────
 
+        // อัปเดต Dashboard State และ Google Sheets หลังสแกนเสร็จ
+        dashboardState.update({
+            botState: currentState,
+            zonesFound: { fvg: fvgs.length, ob: obs.length, total: allZones.length },
+            lastM5: {
+                open: closedM5Candle.open,
+                high: closedM5Candle.high,
+                low: closedM5Candle.low,
+                close: closedM5Candle.close
+            }
+        });
+        sheets.updateBotStatus({
+            state: currentState,
+            zonesFound: allZones.length,
+            lastM5Close: closedM5Candle.close,
+            wsStatus: 'CONNECTED'
+        });
+
         let foundPA = false;
         for (let zone of allZones) {
             const paResult = checkPriceActionInZone(closedM5Candle, zone);
@@ -99,6 +119,27 @@ async function checkMarketLogic() {
 
                 console.log(`\n🔥 [SMC Engine]: ผ่านทุกเงื่อนไข! เข้าสถานะ WAITING_WICK_BREAK`);
                 console.log(`   🎯 รอเบรกปลายไส้ที่: ${referenceWickPrice.toFixed(2)} | SL: ${cancelPrice.toFixed(2)}`);
+
+                // PRE_ALERT: อัปเดต Dashboard State และ Sheets
+                dashboardState.addSignal({
+                    type: 'PRE_ALERT',
+                    zone: zone.name,
+                    direction: signalDirection,
+                    entry: referenceWickPrice,
+                    sl: cancelPrice,
+                    tp1: tp1,
+                    time: new Date().toISOString()
+                });
+                sheets.appendSignal({
+                    type: 'PRE_ALERT',
+                    zone: zone.name,
+                    direction: signalDirection,
+                    entry: referenceWickPrice,
+                    sl: cancelPrice,
+                    tp1: tp1,
+                    tp2: null,
+                    currentPrice: closedM5Candle.close
+                });
 
                 const previewMsg = `⏳ <b>เตรียมตัว! พบการกลับตัวในโซน ${zone.name} H1</b>\n\n` +
                     `ดักรอการ <b>เบรกปลายไส้ (M5)</b> ฝั่ง ${signalDirection}\n\n` +
@@ -135,6 +176,24 @@ async function processTickData(currentPrice) {
         if (isInvalidated) {
             currentState = STATES.SCANNING;
             console.log(`❌ [SMC Engine]: กราฟผิดทาง! ราคาทะลุขอบโซน (${cancelPrice}) ระบบกลับไป SCANNING`);
+
+            // INVALIDATED: อัปเดต Dashboard State และ Sheets
+            dashboardState.addSignal({
+                type: 'INVALIDATED',
+                direction: signalDirection,
+                entry: referenceWickPrice,
+                sl: cancelPrice,
+                currentPrice: currentPrice,
+                time: new Date().toISOString()
+            });
+            sheets.appendSignal({
+                type: 'INVALIDATED',
+                direction: signalDirection,
+                entry: referenceWickPrice,
+                sl: cancelPrice,
+                currentPrice: currentPrice
+            });
+
             await sendSignal(`❌ <b>ยกเลิกสัญญาณ ${signalDirection}</b>\n\nกราฟผิดทาง ทะลุจุด SL ขอบโซนที่ <b>${cancelPrice.toFixed(2)}</b> ก่อนการเบรก ระบบกลับสู่โหมดสแกนหาโซนใหม่...`);
             return;
         }
@@ -154,6 +213,27 @@ async function processTickData(currentPrice) {
                 tp1Price = referenceWickPrice - (risk * 2);
                 tp2Price = referenceWickPrice - (risk * 3);
             }
+
+            // TRIGGERED: อัปเดต Dashboard State และ Sheets
+            dashboardState.addSignal({
+                type: 'TRIGGERED',
+                direction: signalDirection,
+                entry: referenceWickPrice,
+                sl: slPrice,
+                tp1: tp1Price,
+                tp2: tp2Price,
+                currentPrice: currentPrice,
+                time: new Date().toISOString()
+            });
+            sheets.appendSignal({
+                type: 'TRIGGERED',
+                direction: signalDirection,
+                entry: referenceWickPrice,
+                sl: slPrice,
+                tp1: tp1Price,
+                tp2: tp2Price,
+                currentPrice: currentPrice
+            });
 
             const msg = `🔥 <b>WickHunter XAU | SIGNAL TRIGGERED</b> 🔥\n\n` +
                 `✅ <b>Direction:</b> ${signalDirection}\n` +

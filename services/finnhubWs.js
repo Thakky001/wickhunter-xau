@@ -1,6 +1,7 @@
 const WebSocket = require('ws');
 const keys = require('../config/keys');
 const { processTickData } = require('../logic/smcEngine');
+const dashboardState = require('./dashboardState');
 
 // Exponential Backoff: เริ่มที่ 5 วิ → 10 → 20 → 40 → สูงสุด 120 วิ
 const INITIAL_DELAY = 5000;
@@ -20,6 +21,7 @@ function startPriceStream() {
         // ✅ Connect สำเร็จ → รีเซ็ต delay กลับเป็นค่าเริ่มต้น
         currentDelay = INITIAL_DELAY;
         console.log('🔗 WebSocket Connected: WickHunter กำลังดักซุ่มราคา OANDA:XAU_USD...');
+        dashboardState.updateWsStatus('CONNECTED');
         ws.send(JSON.stringify({ 'type': 'subscribe', 'symbol': 'OANDA:XAU_USD' }));
 
         // Heartbeat ทุก 20 วิ ป้องกัน Connection หลุดจาก Idle
@@ -45,6 +47,7 @@ function startPriceStream() {
             heartbeatTimer = null;
         }
         console.log(`⚠️ WebSocket Disconnected → รอ ${currentDelay / 1000} วินาทีก่อน Reconnect...`);
+        dashboardState.updateWsStatus('DISCONNECTED');
         setTimeout(startPriceStream, currentDelay);
 
         // เพิ่ม delay เป็น 2 เท่าสำหรับรอบถัดไป (ไม่เกิน MAX_DELAY)
