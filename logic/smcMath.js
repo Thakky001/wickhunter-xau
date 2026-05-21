@@ -151,20 +151,24 @@ function checkPriceActionInZone(candle, zone) {
 }
 
 function checkChoCh(m5Candles, direction) {
-    // 🔥 แก้ตรงนี้: เปลี่ยนจาก < 4 เป็น < 6 เพื่อป้องกันการแครชเมื่อเรียก recent[5]
-    if (m5Candles.length < 6) return false; 
+    // ต้องมีอย่างน้อย 3 แท่ง: แท่งก่อนหน้า 2 แท่ง + แท่ง PA แท่งล่าสุด
+    if (m5Candles.length < 3) return false;
 
-    const recent = m5Candles.slice(-6); // 6 แท่งล่าสุด
-    const priorCandles = recent.slice(0, 5); // 5 แท่งก่อน PA candle
-    
+    // แท่ง PA ที่เพิ่งปิด (แท่งล่าสุด)
+    const paCandle = m5Candles[m5Candles.length - 1];
+    // แท่งก่อนหน้า PA 1 แท่ง (ควรเป็นแท่งที่กำลังวิ่งตามเทรนด์เดิม)
+    const prevCandle = m5Candles[m5Candles.length - 2];
+
     if (direction === 'BUY') {
-        const prevHigh = Math.max(...priorCandles.map(c => c.high));
-        return recent[5].close > prevHigh;
+        // ChoCh BUY: แท่ง PA (Pin Bar ขาขึ้น) ต้องปิดสูงกว่า Close ของแท่งก่อนหน้า
+        // (แท่งก่อนหน้าควรเป็นขาลง → PA ปิดสูงกว่ามัน = เปลี่ยนทิศ)
+        return paCandle.close > prevCandle.close;
     }
 
     if (direction === 'SELL') {
-        const prevLow = Math.min(...priorCandles.map(c => c.low));
-        return recent[5].close < prevLow;
+        // ChoCh SELL: แท่ง PA (Pin Bar ขาลง) ต้องปิดต่ำกว่า Close ของแท่งก่อนหน้า
+        // (แท่งก่อนหน้าควรเป็นขาขึ้น → PA ปิดต่ำกว่ามัน = เปลี่ยนทิศ)
+        return paCandle.close < prevCandle.close;
     }
 
     return false;
