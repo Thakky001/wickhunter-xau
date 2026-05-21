@@ -53,6 +53,7 @@ async function checkMarketLogic() {
         const m5Candles = await getCandles('5', 15);
 
         if (cachedH1Candles.length === 0 || m5Candles.length < 2) {
+            console.log(`⚠️  [DEBUG]: ดึงข้อมูลแท่งเทียนไม่สำเร็จหรือได้มาไม่ครบ → ข้ามรอบนี้`);
             return;
         }
 
@@ -65,13 +66,25 @@ async function checkMarketLogic() {
         const closedM5Candle = m5Candles[m5Candles.length - 2];
         const closedM5Array = m5Candles.slice(0, -1); 
 
+        // ─── DEBUG: สรุปผลการสแกนรอบนี้ ───────────────────────────────
+        const now = new Date().toLocaleTimeString('th-TH');
+        console.log(`\n─────────────────────────────────────────`);
+        console.log(`🔍 [SCAN] ${now} | State: ${currentState}`);
+        console.log(`   📊 H1 Zones พบทั้งหมด: ${allZones.length} โซน (FVG: ${fvgs.length}, OB: ${obs.length})`);
+        console.log(`   🕯️  M5 แท่งปิดล่าสุด | O:${closedM5Candle.open.toFixed(2)} H:${closedM5Candle.high.toFixed(2)} L:${closedM5Candle.low.toFixed(2)} C:${closedM5Candle.close.toFixed(2)}`);
+        // ───────────────────────────────────────────────────────────────
+
+        let foundPA = false;
         for (let zone of allZones) {
             const paResult = checkPriceActionInZone(closedM5Candle, zone);
 
             if (paResult.isValid) {
+                foundPA = true;
+                console.log(`   ✨ พบ PA ในโซน [${zone.name}] (${zone.bottom.toFixed(2)} - ${zone.top.toFixed(2)}) | Direction: ${paResult.direction}`);
+
                 const hasChoCh = checkChoCh(closedM5Array, paResult.direction);
                 if (!hasChoCh) {
-                    console.log(`⏭️ [SMC Engine]: พบ PA ในโซน แต่ยังไม่เกิด ChoCh ข้ามไปก่อน`);
+                    console.log(`   ⏭️  ยังไม่เกิด ChoCh ใน M5 → ข้ามโซนนี้ไปก่อน`);
                     continue; // ข้ามโซนนี้ รอโซนถัดไป
                 }
                 
@@ -84,8 +97,8 @@ async function checkMarketLogic() {
                 const risk = Math.abs(referenceWickPrice - cancelPrice);
                 const tp1 = signalDirection === 'BUY' ? referenceWickPrice + (risk * 2) : referenceWickPrice - (risk * 2);
 
-                console.log(`\n🔍 [SMC Engine]: กราฟชนโซน ${zone.name} H1`);
-                console.log(`🎯 [SMC Engine]: เกิด PA ปิดโซนสำเร็จ รอเคลียร์ไส้ที่: ${referenceWickPrice}`);
+                console.log(`\n🔥 [SMC Engine]: ผ่านทุกเงื่อนไข! เข้าสถานะ WAITING_WICK_BREAK`);
+                console.log(`   🎯 รอเบรกปลายไส้ที่: ${referenceWickPrice.toFixed(2)} | SL: ${cancelPrice.toFixed(2)}`);
 
                 const previewMsg = `⏳ <b>เตรียมตัว! พบการกลับตัวในโซน ${zone.name} H1</b>\n\n` +
                     `ดักรอการ <b>เบรกปลายไส้ (M5)</b> ฝั่ง ${signalDirection}\n\n` +
@@ -97,11 +110,17 @@ async function checkMarketLogic() {
                 break;
             }
         }
+
+        if (!foundPA) {
+            console.log(`   😴 ยังไม่พบ PA ที่ผ่านเงื่อนไขในโซนไหนเลย → รอรอบหน้า (2 นาที)`);
+        }
+        console.log(`─────────────────────────────────────────`);
     }
 }
 
 async function processTickData(currentPrice) {
     if (currentState === STATES.WAITING_WICK_BREAK) {
+        console.log(`📡 [TICK] ราคาปัจจุบัน: ${currentPrice.toFixed(2)} (รอเบรก: ${referenceWickPrice.toFixed(2)})`);
         let isBreakout = false;
         let isInvalidated = false;
 
