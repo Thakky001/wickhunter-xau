@@ -10,6 +10,11 @@ const STATES = {
     TRIGGERED: 'TRIGGERED'
 };
 
+const PRE_ALERT_TIMEOUT_MS = 15 * 60 * 1000;
+const TICK_STALE_MS = 60 * 1000;
+const WAITING_GUARD_INTERVAL_MS = 30 * 1000;
+const FALLBACK_CHECK_COOLDOWN_MS = 60 * 1000;
+
 let currentState = STATES.SCANNING;
 let referenceWickPrice = 0;
 let cancelPrice = 0; // เปลี่ยนชื่อตัวแปรให้ตรงกับความหมาย (ขอบโซน)
@@ -18,6 +23,18 @@ let signalDirection = '';
 let cachedH1Candles = [];
 let lastH1FetchHour = -1;
 let isCheckingMarket = false;
+let waitingStartedAt = null;
+let lastTickAt = Date.now();
+let lastFallbackCheckAt = 0;
+let isCheckingWaitingGuard = false;
+
+function clearActiveSignal() {
+    referenceWickPrice = 0;
+    cancelPrice = 0;
+    signalDirection = '';
+    waitingStartedAt = null;
+    lastFallbackCheckAt = 0;
+}
 
 function isMarketOpen() {
     const now = new Date();
@@ -120,6 +137,9 @@ async function checkMarketLogic() {
                 referenceWickPrice = paResult.triggerWickPrice;
                 cancelPrice = paResult.cancelPrice;
                 signalDirection = paResult.direction;
+                waitingStartedAt = Date.now();
+                lastTickAt = Date.now();
+                lastFallbackCheckAt = 0;
                 currentState = STATES.WAITING_WICK_BREAK;
                 dashboardState.update({ botState: currentState });
 
@@ -176,9 +196,7 @@ async function forceScanNow(reason = 'manual') {
     const previousState = currentState;
 
     currentState = STATES.SCANNING;
-    referenceWickPrice = 0;
-    cancelPrice = 0;
-    signalDirection = '';
+    clearActiveSignal();
 
     console.log(`🔄 [SMC Engine]: Force scan requested (${reason}) | Previous state: ${previousState}`);
     dashboardState.update({ botState: currentState });
@@ -192,22 +210,109 @@ async function forceScanNow(reason = 'manual') {
     };
 }
 
-async function processTickData(currentPrice) {
+async function expireWaitingSignal() {
+    if (currentState !== STATES.WAITING_WICK_BREAK) return;
+
+    const direction = signalDirection;
+    const entry = referenceWickPrice;
+    const sl = cancelPrice;
+
+    currentState = STATES.SCANNING;
+    console.log(`⌛ [SMC Engine]: PRE_ALERT ${direction} หมดอายุ ระบบกลับไป SCANNING`);
+    dashboardState.update({ botState: currentState });
+    dashboardState.addSignal({
+        type: 'EXPIRED',
+        direction,
+        entry,
+        sl,
+        time: new Date().toISOString()
+    });
+    sheets.appendSignal({
+        type: 'EXPIRED',
+        direction,
+        entry,
+        sl
+    });
+    clearActiveSignal();
+
+    await sendSignal(`⌛ <b>หมดอายุสัญญาณ ${direction}</b>\n\nรอเบรกนานเกิน 15 นาที แต่ราคาไม่ถึง Entry/SL ระบบกลับไปสแกนหาโซนใหม่แล้ว`);
+}
+
+async function checkWaitingGuard() {
+    if (currentState !== STATES.WAITING_WICK_BREAK || isCheckingWaitingGuard) return;
+
+    const now = Date.now();
+    if (waitingStartedAt && now - waitingStartedAt >= PRE_ALERT_TIMEOUT_MS) {
+        isCheckingWaitingGuard = true;
+        try {
+            await expireWaitingSignal();
+        } finally {
+            isCheckingWaitingGuard = false;
+        }
+        return;
+    }
+
+    if (now - lastTickAt < TICK_STALE_MS) return;
+    if (now - lastFallbackCheckAt < FALLBACK_CHECK_COOLDOWN_MS) return;
+
+    isCheckingWaitingGuard = true;
+    lastFallbackCheckAt = now;
+    try {
+        console.log("🛰️ [SMC Engine]: Finnhub tick ขาดช่วง → เช็ก M5 จาก TwelveData fallback");
+        const m5Candles = await getCandles('5', 2);
+        const latestCandle = m5Candles[m5Candles.length - 1];
+
+        if (!latestCandle) {
+            console.log("⚠️ [SMC Engine]: fallback ไม่พบแท่ง M5 ล่าสุด");
+            return;
+        }
+
+        if (signalDirection === 'BUY') {
+            if (latestCandle.low <= cancelPrice) {
+                await processTickData(latestCandle.low, 'fallback');
+            } else if (latestCandle.high >= referenceWickPrice) {
+                await processTickData(latestCandle.high, 'fallback');
+            }
+        } else if (signalDirection === 'SELL') {
+            if (latestCandle.high >= cancelPrice) {
+                await processTickData(latestCandle.high, 'fallback');
+            } else if (latestCandle.low <= referenceWickPrice) {
+                await processTickData(latestCandle.low, 'fallback');
+            }
+        }
+    } finally {
+        isCheckingWaitingGuard = false;
+    }
+}
+
+async function processTickData(currentPrice, source = 'tick') {
+    const price = Number(currentPrice);
+    if (!Number.isFinite(price)) return;
+
+    if (source === 'tick') {
+        lastTickAt = Date.now();
+    }
+
     if (currentState === STATES.WAITING_WICK_BREAK) {
-        console.log(`📡 [TICK] ราคาปัจจุบัน: ${currentPrice.toFixed(2)} (รอเบรก: ${referenceWickPrice.toFixed(2)})`);
+        const sourceLabel = source === 'fallback' ? 'FALLBACK' : 'TICK';
+        const sourceNote = source === 'fallback'
+            ? '\n\n⚠️ ตรวจพบจาก TwelveData fallback เพราะ Finnhub tick ขาดช่วง'
+            : '';
+        console.log(`📡 [${sourceLabel}] ราคาปัจจุบัน: ${price.toFixed(2)} (รอเบรก: ${referenceWickPrice.toFixed(2)})`);
         let isBreakout = false;
         let isInvalidated = false;
 
         if (signalDirection === 'BUY') {
-            if (currentPrice > referenceWickPrice) isBreakout = true;
-            if (currentPrice < cancelPrice) isInvalidated = true; // ถ้าราคาร่วงหลุดขอบโซนล่าง
+            if (price >= referenceWickPrice) isBreakout = true;
+            if (price <= cancelPrice) isInvalidated = true; // ถ้าราคาร่วงหลุดขอบโซนล่าง
         } else if (signalDirection === 'SELL') {
-            if (currentPrice < referenceWickPrice) isBreakout = true;
-            if (currentPrice > cancelPrice) isInvalidated = true; // ถ้าราคาพุ่งทะลุขอบโซนบน
+            if (price <= referenceWickPrice) isBreakout = true;
+            if (price >= cancelPrice) isInvalidated = true; // ถ้าราคาพุ่งทะลุขอบโซนบน
         }
 
         if (isInvalidated) {
             currentState = STATES.SCANNING;
+            waitingStartedAt = null;
             console.log(`❌ [SMC Engine]: กราฟผิดทาง! ราคาทะลุขอบโซน (${cancelPrice}) ระบบกลับไป SCANNING`);
             dashboardState.update({ botState: currentState });
 
@@ -217,7 +322,7 @@ async function processTickData(currentPrice) {
                 direction: signalDirection,
                 entry: referenceWickPrice,
                 sl: cancelPrice,
-                currentPrice: currentPrice,
+                currentPrice: price,
                 time: new Date().toISOString()
             });
             sheets.appendSignal({
@@ -225,15 +330,16 @@ async function processTickData(currentPrice) {
                 direction: signalDirection,
                 entry: referenceWickPrice,
                 sl: cancelPrice,
-                currentPrice: currentPrice
+                currentPrice: price
             });
 
-            await sendSignal(`❌ <b>ยกเลิกสัญญาณ ${signalDirection}</b>\n\nกราฟผิดทาง ทะลุจุด SL ขอบโซนที่ <b>${cancelPrice.toFixed(2)}</b> ก่อนการเบรก ระบบกลับสู่โหมดสแกนหาโซนใหม่...`);
+            await sendSignal(`❌ <b>ยกเลิกสัญญาณ ${signalDirection}</b>\n\nกราฟผิดทาง ทะลุจุด SL ขอบโซนที่ <b>${cancelPrice.toFixed(2)}</b> ก่อนการเบรก ระบบกลับสู่โหมดสแกนหาโซนใหม่...${sourceNote}`);
             return;
         }
 
         if (isBreakout) {
             currentState = STATES.TRIGGERED;
+            waitingStartedAt = null;
             dashboardState.update({ botState: currentState });
 
             const slPrice = cancelPrice;
@@ -257,7 +363,7 @@ async function processTickData(currentPrice) {
                 sl: slPrice,
                 tp1: tp1Price,
                 tp2: tp2Price,
-                currentPrice: currentPrice,
+                currentPrice: price,
                 time: new Date().toISOString()
             });
             sheets.appendSignal({
@@ -267,7 +373,7 @@ async function processTickData(currentPrice) {
                 sl: slPrice,
                 tp1: tp1Price,
                 tp2: tp2Price,
-                currentPrice: currentPrice
+                currentPrice: price
             });
 
             const msg = `🔥 <b>WickHunter XAU | SIGNAL TRIGGERED</b> 🔥\n\n` +
@@ -277,7 +383,7 @@ async function processTickData(currentPrice) {
                 `🛑 <b>Stop Loss:</b> ${slPrice.toFixed(2)}\n` +
                 `🎯 <b>TP 1 (RR 1:2):</b> ${tp1Price.toFixed(2)}\n` +
                 `🎯 <b>TP 2 (RR 1:3):</b> ${tp2Price.toFixed(2)}\n\n` +
-                `🚀 <b>Current Price:</b> ${currentPrice.toFixed(2)}`;
+                `🚀 <b>Current Price:</b> ${price.toFixed(2)}${sourceNote}`;
 
             await sendSignal(msg);
             console.log(`🟢 [SMC Engine]: สัญญาณถูกส่งแล้ว! รีเซ็ตระบบกลับสู่โหมดสแกนใน 5 นาที...`);
@@ -292,6 +398,7 @@ async function processTickData(currentPrice) {
 }
 
 setInterval(checkMarketLogic, 120000);
+setInterval(checkWaitingGuard, WAITING_GUARD_INTERVAL_MS);
 
 checkMarketLogic();
 
