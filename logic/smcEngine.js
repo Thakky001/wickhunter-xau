@@ -17,6 +17,7 @@ let signalDirection = '';
 
 let cachedH1Candles = [];
 let lastH1FetchHour = -1;
+let isCheckingMarket = false;
 
 function isMarketOpen() {
     const now = new Date();
@@ -37,6 +38,14 @@ function isMarketOpen() {
 }
 
 async function checkMarketLogic() {
+    if (isCheckingMarket) {
+        console.log("⏳ [SMC Engine]: รอบสแกนก่อนหน้ายังทำงานอยู่ ข้ามรอบนี้ก่อน");
+        return;
+    }
+
+    isCheckingMarket = true;
+
+    try {
     if (!isMarketOpen()) {
         console.log("💤 ตลาดทองคำปิดทำการ บอทเข้าสู่โหมดพักผ่อน...");
         return;
@@ -112,6 +121,7 @@ async function checkMarketLogic() {
                 cancelPrice = paResult.cancelPrice;
                 signalDirection = paResult.direction;
                 currentState = STATES.WAITING_WICK_BREAK;
+                dashboardState.update({ botState: currentState });
 
                 // คำนวณระยะความเสี่ยง (Risk) และเป้าหมาย TP (Reward) 
                 const risk = Math.abs(referenceWickPrice - cancelPrice);
@@ -157,6 +167,29 @@ async function checkMarketLogic() {
         }
         console.log(`─────────────────────────────────────────`);
     }
+    } finally {
+        isCheckingMarket = false;
+    }
+}
+
+async function forceScanNow(reason = 'manual') {
+    const previousState = currentState;
+
+    currentState = STATES.SCANNING;
+    referenceWickPrice = 0;
+    cancelPrice = 0;
+    signalDirection = '';
+
+    console.log(`🔄 [SMC Engine]: Force scan requested (${reason}) | Previous state: ${previousState}`);
+    dashboardState.update({ botState: currentState });
+
+    await checkMarketLogic();
+
+    return {
+        ok: true,
+        previousState,
+        currentState
+    };
 }
 
 async function processTickData(currentPrice) {
@@ -176,6 +209,7 @@ async function processTickData(currentPrice) {
         if (isInvalidated) {
             currentState = STATES.SCANNING;
             console.log(`❌ [SMC Engine]: กราฟผิดทาง! ราคาทะลุขอบโซน (${cancelPrice}) ระบบกลับไป SCANNING`);
+            dashboardState.update({ botState: currentState });
 
             // INVALIDATED: อัปเดต Dashboard State และ Sheets
             dashboardState.addSignal({
@@ -200,6 +234,7 @@ async function processTickData(currentPrice) {
 
         if (isBreakout) {
             currentState = STATES.TRIGGERED;
+            dashboardState.update({ botState: currentState });
 
             const slPrice = cancelPrice;
             const risk = Math.abs(referenceWickPrice - slPrice);
@@ -250,6 +285,7 @@ async function processTickData(currentPrice) {
             setTimeout(() => {
                 currentState = STATES.SCANNING;
                 console.log("🔄 [SMC Engine]: กลับสู่โหมด SCANNING รอโซนถัดไป");
+                dashboardState.update({ botState: currentState });
             }, 300000);
         }
     }
@@ -259,4 +295,4 @@ setInterval(checkMarketLogic, 120000);
 
 checkMarketLogic();
 
-module.exports = { processTickData };
+module.exports = { processTickData, forceScanNow };

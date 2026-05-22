@@ -92,6 +92,42 @@
             color: var(--text-muted);
         }
 
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .control-button {
+            border: 1px solid rgba(240,180,41,0.45);
+            background: rgba(240,180,41,0.12);
+            color: var(--gold);
+            border-radius: 8px;
+            padding: 8px 12px;
+            font: inherit;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background 0.2s, border-color 0.2s, opacity 0.2s;
+            white-space: nowrap;
+        }
+
+        .control-button:hover {
+            background: rgba(240,180,41,0.2);
+            border-color: rgba(240,180,41,0.7);
+        }
+
+        .control-button:disabled {
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        #force-scan-status {
+            font-size: 11px;
+            color: var(--text-muted);
+            min-width: 72px;
+        }
+
         #sse-dot {
             width: 8px;
             height: 8px;
@@ -416,6 +452,9 @@
             .card-value { font-size: 18px; }
             header { padding: 14px 16px; }
             main { padding: 16px 12px; }
+            .header-actions { gap: 8px; }
+            #force-scan-status { display: none; }
+            .control-button { padding: 7px 10px; }
         }
     </style>
 </head>
@@ -429,9 +468,15 @@
                 <p>Gold SMC Algo — Live Dashboard</p>
             </div>
         </div>
-        <div id="sse-status">
-            <div id="sse-dot"></div>
-            <span id="sse-label">Connecting…</span>
+        <div class="header-actions">
+            <button id="force-scan-btn" class="control-button" type="button" title="Reset waiting state and scan immediately">
+                Scan Now
+            </button>
+            <span id="force-scan-status"></span>
+            <div id="sse-status">
+                <div id="sse-dot"></div>
+                <span id="sse-label">Connecting…</span>
+            </div>
         </div>
     </header>
 
@@ -718,8 +763,35 @@
         const sseDot = $('sse-dot');
         const sseLabel = $('sse-label');
         const reconnectBanner = $('reconnect-banner');
+        const forceScanBtn = $('force-scan-btn');
+        const forceScanStatus = $('force-scan-status');
 
         let reconnectDelay = 3000;
+
+        async function forceScan() {
+            forceScanBtn.disabled = true;
+            forceScanStatus.textContent = 'Scanning...';
+
+            try {
+                const response = await fetch('/force-scan', { method: 'POST' });
+                const result = await response.json();
+
+                if (!response.ok || !result.ok) {
+                    throw new Error(result.error || 'Force scan failed');
+                }
+
+                forceScanStatus.textContent = 'Done';
+                setTimeout(() => { forceScanStatus.textContent = ''; }, 3000);
+            } catch (err) {
+                console.error('Force scan error:', err);
+                forceScanStatus.textContent = 'Failed';
+                setTimeout(() => { forceScanStatus.textContent = ''; }, 5000);
+            } finally {
+                forceScanBtn.disabled = false;
+            }
+        }
+
+        forceScanBtn.addEventListener('click', forceScan);
 
         function connectSSE() {
             const es = new EventSource('/events');

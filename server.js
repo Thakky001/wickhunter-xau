@@ -1,6 +1,7 @@
 const express = require('express');
 const keys = require('./config/keys');
 const { startPriceStream } = require('./services/finnhubWs');
+const { forceScanNow } = require('./logic/smcEngine');
 const dashboardState = require('./services/dashboardState');
 const sheets = require('./services/sheets');
 
@@ -38,6 +39,17 @@ app.get('/events', (req, res) => {
 // Debug status endpoint
 app.get('/status', (req, res) => {
     res.json(dashboardState.state);
+});
+
+// Force the bot back to SCANNING and run one scan immediately.
+app.post('/force-scan', async (req, res) => {
+    try {
+        const result = await forceScanNow('dashboard');
+        res.json(result);
+    } catch (error) {
+        console.error('❌ Force scan failed:', error.message);
+        res.status(500).json({ ok: false, error: error.message });
+    }
 });
 
 // Broadcast state updates to all SSE clients
