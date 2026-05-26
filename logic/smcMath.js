@@ -104,8 +104,19 @@ function findOrderBlock(candles) {
     return orderBlocks;
 }
 
+const MATH_CONFIG = {
+    MIN_CANDLE_SIZE: 1.5, // กรอง Micro-wicks ขนาดแท่ง M5 ต้องกว้างไม่ต่ำกว่า 1.5 USD (150 จุด)
+    CHOCH_LOOKBACK: 3     // เช็กราคาปิดชนะจุดสูงสุด/ต่ำสุดของ 3 แท่งเทียนก่อนหน้า
+};
+
 function checkPriceActionInZone(candle, zone) {
     const totalLength = candle.high - candle.low;
+    
+    // กรองแท่งเทียนที่ไม่มีปริมาณการซื้อขาย (Micro-Wicks) ช่วงตลาดเงียบ
+    if (totalLength < MATH_CONFIG.MIN_CANDLE_SIZE) {
+        return { isValid: false };
+    }
+
     const bodyLength = Math.abs(candle.open - candle.close);
     
     const lowerWick = Math.min(candle.open, candle.close) - candle.low;
@@ -119,7 +130,6 @@ function checkPriceActionInZone(candle, zone) {
 
     if (zone.type === 'BUY_ZONE') {
         const isTouchOrSweepZone = candle.low <= zone.top; 
-        
         const isCloseInsideOrAbove = candle.close >= zone.bottom;
 
         if (isTouchOrSweepZone && isCloseInsideOrAbove && isBullishPA) {
@@ -127,14 +137,15 @@ function checkPriceActionInZone(candle, zone) {
                 isValid: true, 
                 direction: 'BUY', 
                 triggerWickPrice: candle.high,
-                cancelPrice: zone.bottom // 🔥 ข้อ 4: ใช้ขอบล่างของโซน H1 เป็นจุด Stop Loss
+                cancelPrice: zone.bottom, // ขอบล่างของโซน H1
+                paCandleLow: candle.low,
+                paCandleHigh: candle.high
             };
         }
     }
 
     if (zone.type === 'SELL_ZONE') {
         const isTouchOrSweepZone = candle.high >= zone.bottom;
-        
         const isCloseInsideOrBelow = candle.close <= zone.top;
 
         if (isTouchOrSweepZone && isCloseInsideOrBelow && isBearishPA) {
@@ -142,7 +153,9 @@ function checkPriceActionInZone(candle, zone) {
                 isValid: true, 
                 direction: 'SELL', 
                 triggerWickPrice: candle.low,
-                cancelPrice: zone.top // 🔥 ข้อ 4: ใช้ขอบบนของโซน H1 เป็นจุด Stop Loss
+                cancelPrice: zone.top, // ขอบบนของโซน H1
+                paCandleLow: candle.low,
+                paCandleHigh: candle.high
             };
         }
     }
@@ -151,24 +164,26 @@ function checkPriceActionInZone(candle, zone) {
 }
 
 function checkChoCh(m5Candles, direction) {
-    // ต้องมีอย่างน้อย 3 แท่ง: แท่งก่อนหน้า 2 แท่ง + แท่ง PA แท่งล่าสุด
-    if (m5Candles.length < 3) return false;
+    const lookback = MATH_CONFIG.CHOCH_LOOKBACK;
+    // ต้องมีอย่างน้อยจำนวนแท่งเทียนที่ระบุ + แท่ง PA ล่าสุด
+    if (m5Candles.length < (lookback + 1)) return false;
 
-    // แท่ง PA ที่เพิ่งปิด (แท่งล่าสุด)
     const paCandle = m5Candles[m5Candles.length - 1];
-    // แท่งก่อนหน้า PA 1 แท่ง (ควรเป็นแท่งที่กำลังวิ่งตามเทรนด์เดิม)
-    const prevCandle = m5Candles[m5Candles.length - 2];
+    const prevCandles = m5Candles.slice(m5Candles.length - 1 - lookback, m5Candles.length - 1);
 
     if (direction === 'BUY') {
-        // ChoCh BUY: แท่ง PA (Pin Bar ขาขึ้น) ต้องปิดสูงกว่า Close ของแท่งก่อนหน้า
-        // (แท่งก่อนหน้าควรเป็นขาลง → PA ปิดสูงกว่ามัน = เปลี่ยนทิศ)
-        return paCandle.close > prevCandle.close;
+        // [Bug#2 Fix] เปลี่ยนจากเทียบ max(High) → max(Close) ของ 3 แท่งก่อนหน้า
+        // เหตุผล: แท่ง Pin Bar มี close อยู่ในเนื้อเทียน (ไม่ใช่ที่ยอด High)
+        // การเทียบกับ max(High) ทำให้ CHOCH ผ่านได้ยากเกินจริง
+        // การเทียบกับ max(Close) = วัดว่า momentum กลับทิศจริงหรือไม่
+        const maxClose = Math.max(...prevCandles.map(c => c.close));
+        return paCandle.close > maxClose;
     }
 
     if (direction === 'SELL') {
-        // ChoCh SELL: แท่ง PA (Pin Bar ขาลง) ต้องปิดต่ำกว่า Close ของแท่งก่อนหน้า
-        // (แท่งก่อนหน้าควรเป็นขาขึ้น → PA ปิดต่ำกว่ามัน = เปลี่ยนทิศ)
-        return paCandle.close < prevCandle.close;
+        // [Bug#2 Fix] เปลี่ยนจากเทียบ min(Low) → min(Close) ของ 3 แท่งก่อนหน้า
+        const minClose = Math.min(...prevCandles.map(c => c.close));
+        return paCandle.close < minClose;
     }
 
     return false;
