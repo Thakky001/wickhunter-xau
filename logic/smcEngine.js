@@ -16,7 +16,7 @@ const ENGINE_CONFIG = {
     MAX_SL_POINTS: 12.0,         // จำกัดระยะ SL สูงสุดไม่เกิน 12.0 USD (1,200 จุด)
     MIN_TP_POINTS: 10.0,         // จำกัดระยะ TP ขั้นต่ำไม่น้อยกว่า 10.0 USD (1,000 จุด)
     ENTRY_MODE: 'WICK_BREAKOUT', // 'WICK_BREAKOUT' (เบรกไส้เดิม) หรือ 'CANDLE_CLOSE' (เข้าทันทีเมื่อจบแท่ง PA M5 เพื่อราคาที่ดีที่สุด)
-    MAX_ZONE_AGE_HOURS: 24       // กรองโซน H1 ย้อนหลังไม่เกิน 24 ชั่วโมง
+    MAX_ZONE_AGE_HOURS: 48       // กรองโซน H1 ย้อนหลังไม่เกิน 48 ชั่วโมง
 };
 
 const PRE_ALERT_TIMEOUT_MS = 15 * 60 * 1000;
@@ -80,7 +80,7 @@ async function checkMarketLogic() {
     if (currentState === STATES.SCANNING) {
         const currentHour = new Date().getHours();
         if (cachedH1Candles.length === 0 || currentHour !== lastH1FetchHour) {
-            cachedH1Candles = await getCandles('60', 50);
+            cachedH1Candles = await getCandles('60', 75);
             lastH1FetchHour = currentHour;
             if (cachedH1Candles.length > 0) {
                 console.log(`🔄 [SMC Engine]: อัปเดตข้อมูลแท่งเทียน H1 ใหม่ (ชั่วโมงที่ ${currentHour})`);
