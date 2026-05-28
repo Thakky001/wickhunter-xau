@@ -1,5 +1,5 @@
 const { sendSignal } = require('../services/telegram');
-const { findFVG, findOrderBlock, checkPriceActionInZone, checkChoCh } = require('./smcMath');
+const { findFVG, findOrderBlock, checkPriceActionInZone, checkChoCh, getHTFTrend } = require('./smcMath');
 const { getCandles } = require('../services/twelveData');
 const dashboardState = require('../services/dashboardState');
 const sheets = require('../services/sheets');
@@ -15,7 +15,7 @@ const ENGINE_CONFIG = {
     SL_BUFFER: 2.0,              // ระยะเผื่อสะบัดปลายไส้ (2.0 USD หรือ 200 จุด)
     MAX_SL_POINTS: 12.0,         // จำกัดระยะ SL สูงสุดไม่เกิน 12.0 USD (1,200 จุด)
     MIN_TP_POINTS: 10.0,         // จำกัดระยะ TP ขั้นต่ำไม่น้อยกว่า 10.0 USD (1,000 จุด)
-    ENTRY_MODE: 'WICK_BREAKOUT', // 'WICK_BREAKOUT' (เบรกไส้เดิม) หรือ 'CANDLE_CLOSE' (เข้าทันทีเมื่อจบแท่ง PA M5 เพื่อราคาที่ดีที่สุด)
+    ENTRY_MODE: 'CANDLE_CLOSE',  // [Fix#2] สลับเป็น CANDLE_CLOSE เพื่อเข้าที่ราคาปิดแท่ง PA (ไม่ใช่ยอด High ที่เป็น Resistance)
     MAX_ZONE_AGE_HOURS: 48       // กรองโซน H1 ย้อนหลังไม่เกิน 48 ชั่วโมง
 };
 
@@ -102,6 +102,9 @@ async function checkMarketLogic() {
         const obs = findOrderBlock(candlesToScan);
         const allZones = [...fvgs, ...obs];
 
+        // [HTF Filter] คำนวณทิศทาง H4 จาก H1 ที่มีอยู่แล้ว ไม่ใช้ API เพิ่ม
+        const htfTrend = getHTFTrend(closedH1Candles);
+
         const closedM5Candle = m5Candles[m5Candles.length - 2];
         const closedM5Array = m5Candles.slice(0, -1);
         // ─── DEBUG: สรุปผลการสแกนรอบนี้ ───────────────────────────────
@@ -109,6 +112,7 @@ async function checkMarketLogic() {
         console.log(`\n─────────────────────────────────────────`);
         console.log(`🔍 [SCAN] ${now} | State: ${currentState}`);
         console.log(`   📊 H1 Zones พบทั้งหมด: ${allZones.length} โซน (FVG: ${fvgs.length}, OB: ${obs.length})`);
+        console.log(`   📈 [HTF Trend H4]: ${htfTrend} → รับสัญญาณ: ${htfTrend === 'BULLISH' ? 'BUY เท่านั้น' : htfTrend === 'BEARISH' ? 'SELL เท่านั้น' : 'ทั้ง BUY และ SELL (Neutral)'}`);
         console.log(`   🕯️  M5 แท่งปิดล่าสุด | O:${closedM5Candle.open.toFixed(2)} H:${closedM5Candle.high.toFixed(2)} L:${closedM5Candle.low.toFixed(2)} C:${closedM5Candle.close.toFixed(2)}`);
         // ───────────────────────────────────────────────────────────────
 
@@ -133,6 +137,16 @@ async function checkMarketLogic() {
         let foundPA = false;
         let foundValidSignal = false;
         for (let zone of allZones) {
+            // [HTF Filter] ข้ามโซนที่สวนทางกับ HTF Trend
+            if (htfTrend === 'BEARISH' && zone.type === 'BUY_ZONE') {
+                console.log(`   🚫 [HTF] ข้าม ${zone.name} เพราะ H4 Bearish → ห้าม BUY`);
+                continue;
+            }
+            if (htfTrend === 'BULLISH' && zone.type === 'SELL_ZONE') {
+                console.log(`   🚫 [HTF] ข้าม ${zone.name} เพราะ H4 Bullish → ห้าม SELL`);
+                continue;
+            }
+
             const paResult = checkPriceActionInZone(closedM5Candle, zone);
 
             if (paResult.isValid) {

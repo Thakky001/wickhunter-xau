@@ -6,10 +6,11 @@ function findFVG(candles) {
 
         // Bullish FVG (Gap ขาขึ้น / โซน Buy)
         if (c3.low > c1.high) {
-            // 🔥 ข้อ 3: ตรวจสอบว่าโซนนี้ถูกใช้ (Mitigate) ไปแล้วหรือยัง
+            // [Fix Mitigation] โซนถูกทำลายเมื่อราคา "ปิดต่ำกว่าขอบล่างโซน"
+            // (ไม่ใช่แค่ไส้แตะขอบบน ซึ่งทำให้โซนหายเร็วเกินจริง)
             let isMitigated = false;
             for (let j = i + 1; j < candles.length; j++) {
-                if (candles[j].low <= c3.low) { // ถ้าราคาลงมาแตะขอบบนโซน = ถูกใช้แล้ว
+                if (candles[j].close < c1.high) {
                     isMitigated = true;
                     break;
                 }
@@ -26,10 +27,10 @@ function findFVG(candles) {
         }
         // Bearish FVG (Gap ขาลง / โซน Sell)
         else if (c3.high < c1.low) {
-            // 🔥 ข้อ 3: ตรวจสอบว่าโซนนี้ถูกใช้ (Mitigate) ไปแล้วหรือยัง
+            // [Fix Mitigation] โซนถูกทำลายเมื่อราคา "ปิดสูงกว่าขอบบนโซน"
             let isMitigated = false;
             for (let j = i + 1; j < candles.length; j++) {
-                if (candles[j].high >= c3.high) { // ถ้าราคาขึ้นไปแตะขอบล่างโซน = ถูกใช้แล้ว
+                if (candles[j].close > c1.low) {
                     isMitigated = true;
                     break;
                 }
@@ -62,10 +63,10 @@ function findOrderBlock(candles) {
 
         // Bullish OB (โซน Buy): แท่งแดงสุดท้าย ก่อนแท่งเขียวพุ่งทะลุ High เดิม
         if (isPrevBearish && isCurrBullish && curr.close > prev.high) {
-            // 🔥 ข้อ 3: ตรวจสอบว่าโซนนี้ถูกใช้ (Mitigate) ไปแล้วหรือยัง
+            // [Fix Mitigation] โซนถูกทำลายเมื่อราคา "ปิดต่ำกว่าขอบล่าง OB"
             let isMitigated = false;
             for (let j = i + 1; j < candles.length; j++) {
-                if (candles[j].low <= prev.high) {
+                if (candles[j].close < prev.low) {
                     isMitigated = true;
                     break;
                 }
@@ -82,10 +83,10 @@ function findOrderBlock(candles) {
         }
         // Bearish OB (โซน Sell): แท่งเขียวสุดท้าย ก่อนแท่งแดงเทขายรุนแรง
         else if (isPrevBullish && isCurrBearish && curr.close < prev.low) {
-            // 🔥 ข้อ 3: ตรวจสอบว่าโซนนี้ถูกใช้ (Mitigate) ไปแล้วหรือยัง
+            // [Fix Mitigation] โซนถูกทำลายเมื่อราคา "ปิดสูงกว่าขอบบน OB"
             let isMitigated = false;
             for (let j = i + 1; j < candles.length; j++) {
-                if (candles[j].high >= prev.low) {
+                if (candles[j].close > prev.high) {
                     isMitigated = true;
                     break;
                 }
@@ -137,7 +138,7 @@ function checkPriceActionInZone(candle, zone) {
                 isValid: true, 
                 direction: 'BUY', 
                 triggerWickPrice: candle.high,
-                cancelPrice: zone.bottom, // ขอบล่างของโซน H1
+                cancelPrice: zone.bottom,
                 paCandleLow: candle.low,
                 paCandleHigh: candle.high
             };
@@ -153,7 +154,7 @@ function checkPriceActionInZone(candle, zone) {
                 isValid: true, 
                 direction: 'SELL', 
                 triggerWickPrice: candle.low,
-                cancelPrice: zone.top, // ขอบบนของโซน H1
+                cancelPrice: zone.top,
                 paCandleLow: candle.low,
                 paCandleHigh: candle.high
             };
@@ -165,23 +166,19 @@ function checkPriceActionInZone(candle, zone) {
 
 function checkChoCh(m5Candles, direction) {
     const lookback = MATH_CONFIG.CHOCH_LOOKBACK;
-    // ต้องมีอย่างน้อยจำนวนแท่งเทียนที่ระบุ + แท่ง PA ล่าสุด
     if (m5Candles.length < (lookback + 1)) return false;
 
     const paCandle = m5Candles[m5Candles.length - 1];
     const prevCandles = m5Candles.slice(m5Candles.length - 1 - lookback, m5Candles.length - 1);
 
     if (direction === 'BUY') {
-        // [Bug#2 Fix] เปลี่ยนจากเทียบ max(High) → max(Close) ของ 3 แท่งก่อนหน้า
-        // เหตุผล: แท่ง Pin Bar มี close อยู่ในเนื้อเทียน (ไม่ใช่ที่ยอด High)
-        // การเทียบกับ max(High) ทำให้ CHOCH ผ่านได้ยากเกินจริง
-        // การเทียบกับ max(Close) = วัดว่า momentum กลับทิศจริงหรือไม่
+        // เปรียบเทียบกับ max(Close) ของ 3 แท่งก่อนหน้า (ไม่ใช่ High)
         const maxClose = Math.max(...prevCandles.map(c => c.close));
         return paCandle.close > maxClose;
     }
 
     if (direction === 'SELL') {
-        // [Bug#2 Fix] เปลี่ยนจากเทียบ min(Low) → min(Close) ของ 3 แท่งก่อนหน้า
+        // เปรียบเทียบกับ min(Close) ของ 3 แท่งก่อนหน้า (ไม่ใช่ Low)
         const minClose = Math.min(...prevCandles.map(c => c.close));
         return paCandle.close < minClose;
     }
@@ -189,4 +186,35 @@ function checkChoCh(m5Candles, direction) {
     return false;
 }
 
-module.exports = { findFVG, findOrderBlock, checkPriceActionInZone, checkChoCh };
+// ─── HTF Trend Filter ─────────────────────────────────────────────────────────
+// วิเคราะห์แนวโน้ม H4 จากข้อมูล H1 ที่มีอยู่แล้ว (ไม่ใช้ API เพิ่มแม้แต่ครั้งเดียว)
+// เปรียบเทียบโครงสร้าง HH/HL (Bullish) กับ LH/LL (Bearish) ใน 3 กลุ่ม H4
+function getHTFTrend(h1Candles) {
+    // ต้องการ 12 แท่ง H1 ขึ้นไป (≈ 3 แท่ง H4) เพื่อประเมินแนวโน้ม
+    if (h1Candles.length < 12) return 'NEUTRAL';
+
+    const last12 = h1Candles.slice(-12);
+
+    // จำลองแท่ง H4 จาก H1 (กลุ่มละ 4 แท่ง)
+    const group1 = last12.slice(0, 4);   // 12-8 ชม.ก่อน (H4 เก่าสุด)
+    const group2 = last12.slice(4, 8);   // 8-4 ชม.ก่อน  (H4 กลาง)
+    const group3 = last12.slice(8, 12);  // 4 ชม.ล่าสุด  (H4 ใหม่สุด)
+
+    const high1 = Math.max(...group1.map(c => c.high));
+    const low1  = Math.min(...group1.map(c => c.low));
+    const high2 = Math.max(...group2.map(c => c.high));
+    const low2  = Math.min(...group2.map(c => c.low));
+    const high3 = Math.max(...group3.map(c => c.high));
+    const low3  = Math.min(...group3.map(c => c.low));
+
+    // Bullish: High และ Low ใหม่กว่าเดิมทุกช่วง (HH + HL)
+    const isBullish = high3 > high2 && high2 > high1 && low3 > low2;
+    // Bearish: High และ Low ต่ำกว่าเดิมทุกช่วง (LH + LL)
+    const isBearish = high3 < high2 && high2 < high1 && low3 < low2;
+
+    if (isBullish) return 'BULLISH';
+    if (isBearish) return 'BEARISH';
+    return 'NEUTRAL';
+}
+
+module.exports = { findFVG, findOrderBlock, checkPriceActionInZone, checkChoCh, getHTFTrend };
