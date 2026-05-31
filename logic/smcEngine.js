@@ -16,7 +16,7 @@ const ENGINE_CONFIG = {
     MAX_SL_POINTS: 12.0,         // จำกัดระยะ SL สูงสุดไม่เกิน 12.0 USD (1,200 จุด)
     MIN_TP_POINTS: 10.0,         // จำกัดระยะ TP ขั้นต่ำไม่น้อยกว่า 10.0 USD (1,000 จุด)
     ENTRY_MODE: 'CANDLE_CLOSE',  // [Fix#2] สลับเป็น CANDLE_CLOSE เพื่อเข้าที่ราคาปิดแท่ง PA (ไม่ใช่ยอด High ที่เป็น Resistance)
-    MAX_ZONE_AGE_HOURS: 48       // กรองโซน H1 ย้อนหลังไม่เกิน 48 ชั่วโมง
+    MAX_ZONE_AGE_HOURS: 72       // กรองโซน H1 ย้อนหลังไม่เกิน 72 ชั่วโมง (3 วัน)
 };
 
 const PRE_ALERT_TIMEOUT_MS = 15 * 60 * 1000;
@@ -80,7 +80,7 @@ async function checkMarketLogic() {
     if (currentState === STATES.SCANNING) {
         const currentHour = new Date().getHours();
         if (cachedH1Candles.length === 0 || currentHour !== lastH1FetchHour) {
-            cachedH1Candles = await getCandles('60', 75);
+            cachedH1Candles = await getCandles('60', 100); // ดึง 100 แท่ง H1 = ~4 วัน (รองรับ MAX_ZONE_AGE_HOURS: 72)
             lastH1FetchHour = currentHour;
             if (cachedH1Candles.length > 0) {
                 console.log(`🔄 [SMC Engine]: อัปเดตข้อมูลแท่งเทียน H1 ใหม่ (ชั่วโมงที่ ${currentHour})`);
@@ -177,16 +177,19 @@ async function checkMarketLogic() {
                         risk = ENGINE_CONFIG.MAX_SL_POINTS;
                         cancelPrice = signalDirection === 'BUY' ? referenceWickPrice - risk : referenceWickPrice + risk;
                     }
-                    
+
                     const minRisk = ENGINE_CONFIG.MIN_TP_POINTS / 2;
                     if (risk < minRisk) {
                         risk = minRisk;
+                        // [Bug#1 Fix] อัปเดต cancelPrice ให้สอดคล้องกับ risk ใหม่ → R:R ถูกต้องแน่นอน
+                        cancelPrice = signalDirection === 'BUY' ? referenceWickPrice - risk : referenceWickPrice + risk;
                     }
 
                     const tp1Price = signalDirection === 'BUY' ? referenceWickPrice + (risk * 2) : referenceWickPrice - (risk * 2);
                     const tp2Price = signalDirection === 'BUY' ? referenceWickPrice + (risk * 3) : referenceWickPrice - (risk * 3);
 
                     currentState = STATES.TRIGGERED;
+                    waitingStartedAt = null; // [Bug#3 Fix] ล้างค่าให้สะอาดเสมอหลัง TRIGGERED
                     dashboardState.update({ botState: currentState });
 
                     // TRIGGERED: ส่งสัญญาณอัปเดตและบันทึก
@@ -252,9 +255,12 @@ async function checkMarketLogic() {
                 let tpRisk = risk;
                 if (tpRisk < minRisk) {
                     tpRisk = minRisk;
+                    // [Bug#1 Fix] อัปเดต cancelPrice ให้สอดคล้องกับ tpRisk → R:R แม่นยำ
+                    cancelPrice = signalDirection === 'BUY' ? referenceWickPrice - tpRisk : referenceWickPrice + tpRisk;
                 }
 
                 const tp1 = signalDirection === 'BUY' ? referenceWickPrice + (tpRisk * 2) : referenceWickPrice - (tpRisk * 2);
+                const tp2 = signalDirection === 'BUY' ? referenceWickPrice + (tpRisk * 3) : referenceWickPrice - (tpRisk * 3);
 
                 waitingStartedAt = Date.now();
                 lastTickAt = Date.now();
@@ -268,6 +274,7 @@ async function checkMarketLogic() {
                     entry: referenceWickPrice,
                     sl: cancelPrice,
                     tp1: tp1,
+                    tp2: tp2,
                     time: new Date().toISOString()
                 });
                 sheets.appendSignal({
@@ -277,7 +284,7 @@ async function checkMarketLogic() {
                     entry: referenceWickPrice,
                     sl: cancelPrice,
                     tp1: tp1,
-                    tp2: null,
+                    tp2: tp2, // [Bug#2 Fix] เพิ่ม TP2 ใน PRE_ALERT
                     currentPrice: closedM5Candle.close
                 });
 
@@ -285,7 +292,8 @@ async function checkMarketLogic() {
                     `ดักรอการ <b>เบรกปลายไส้ (M5)</b> ฝั่ง ${signalDirection}\n\n` +
                     `📍 <b>Entry:</b> ${referenceWickPrice.toFixed(2)}\n` +
                     `🛑 <b>SL (${ENGINE_CONFIG.SL_MODE === 'PA_WICK' ? 'PA Wick' : 'Zone Edge'}):</b> ${cancelPrice.toFixed(2)}\n` +
-                    `🎯 <b>TP (1:2):</b> ${tp1.toFixed(2)}`;
+                    `🎯 <b>TP1 (1:2):</b> ${tp1.toFixed(2)}\n` +
+                    `🎯 <b>TP2 (1:3):</b> ${tp2.toFixed(2)}`; // [Bug#2 Fix] แสดง TP2 ด้วย
 
                 await sendSignal(previewMsg);
                 break;
