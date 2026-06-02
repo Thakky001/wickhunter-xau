@@ -11,10 +11,11 @@ const STATES = {
 };
 
 const ENGINE_CONFIG = {
-    SL_MODE: 'PA_WICK',          // 'PA_WICK' (อิงระดับ M5) หรือ 'ZONE_EDGE' (ขอบโซน H1 แบบเดิม)
+    SL_MODE: 'SWING_HIGH_LOW',   // 'SWING_HIGH_LOW' (อิงจุดสูงสุด/ต่ำสุดย้อนหลัง), 'PA_WICK' (อิงระดับ M5) หรือ 'ZONE_EDGE'
     SL_BUFFER: 2.0,              // ระยะเผื่อสะบัดปลายไส้ (2.0 USD หรือ 200 จุด)
-    MAX_SL_POINTS: 12.0,         // จำกัดระยะ SL สูงสุดไม่เกิน 12.0 USD (1,200 จุด)
-    MIN_TP_POINTS: 10.0,         // จำกัดระยะ TP ขั้นต่ำไม่น้อยกว่า 10.0 USD (1,000 จุด)
+    SWING_LOOKBACK_CANDLES: 10,  // จำนวนแท่ง M5 ย้อนหลังที่ใช้หา Swing High/Low
+    MAX_SL_POINTS: 15.0,         // จำกัดระยะ SL สูงสุดไม่เกิน 15.0 USD (1,500 จุด)
+    MIN_TP_POINTS: 12.0,         // จำกัดระยะ TP ขั้นต่ำไม่น้อยกว่า 12.0 USD (1,200 จุด)
     ENTRY_MODE: 'CANDLE_CLOSE',  // [Fix#2] สลับเป็น CANDLE_CLOSE เพื่อเข้าที่ราคาปิดแท่ง PA (ไม่ใช่ยอด High ที่เป็น Resistance)
     MAX_ZONE_AGE_HOURS: 72       // กรองโซน H1 ย้อนหลังไม่เกิน 72 ชั่วโมง (3 วัน)
 };
@@ -166,11 +167,22 @@ async function checkMarketLogic() {
                 if (ENGINE_CONFIG.ENTRY_MODE === 'CANDLE_CLOSE') {
                     referenceWickPrice = closedM5Candle.close; // ใช้ราคาปิดเป็นจุดเข้า
 
-                    // [Bug#3 Fix] CANDLE_CLOSE mode ต้องใช้ PA_WICK เสมอ
-                    // เพราะ entry คือ candle.close (กลางแท่ง) ถ้าใช้ Zone Edge SL จะกว้างเกิน R:R บิดเบือน
-                    cancelPrice = signalDirection === 'BUY' 
-                        ? paResult.paCandleLow - ENGINE_CONFIG.SL_BUFFER 
-                        : paResult.paCandleHigh + ENGINE_CONFIG.SL_BUFFER;
+                    if (ENGINE_CONFIG.SL_MODE === 'SWING_HIGH_LOW') {
+                        const recentCandles = m5Candles.slice(-ENGINE_CONFIG.SWING_LOOKBACK_CANDLES - 1, -1);
+                        if (signalDirection === 'BUY') {
+                            const swingLow = Math.min(...recentCandles.map(c => c.low));
+                            cancelPrice = swingLow - ENGINE_CONFIG.SL_BUFFER;
+                        } else {
+                            const swingHigh = Math.max(...recentCandles.map(c => c.high));
+                            cancelPrice = swingHigh + ENGINE_CONFIG.SL_BUFFER;
+                        }
+                    } else {
+                        // [Bug#3 Fix] CANDLE_CLOSE mode ต้องใช้ PA_WICK เสมอ
+                        // เพราะ entry คือ candle.close (กลางแท่ง) ถ้าใช้ Zone Edge SL จะกว้างเกิน R:R บิดเบือน
+                        cancelPrice = signalDirection === 'BUY' 
+                            ? paResult.paCandleLow - ENGINE_CONFIG.SL_BUFFER 
+                            : paResult.paCandleHigh + ENGINE_CONFIG.SL_BUFFER;
+                    }
 
                     let risk = Math.abs(referenceWickPrice - cancelPrice);
                     if (risk > ENGINE_CONFIG.MAX_SL_POINTS) {
@@ -237,7 +249,16 @@ async function checkMarketLogic() {
                 // 🌟 โหมด ENTRY_MODE === 'WICK_BREAKOUT' (แบบเดิม - รอราคาเบรกปลายไส้)
                 referenceWickPrice = paResult.triggerWickPrice;
                 
-                if (ENGINE_CONFIG.SL_MODE === 'PA_WICK') {
+                if (ENGINE_CONFIG.SL_MODE === 'SWING_HIGH_LOW') {
+                    const recentCandles = m5Candles.slice(-ENGINE_CONFIG.SWING_LOOKBACK_CANDLES - 1, -1);
+                    if (signalDirection === 'BUY') {
+                        const swingLow = Math.min(...recentCandles.map(c => c.low));
+                        cancelPrice = swingLow - ENGINE_CONFIG.SL_BUFFER;
+                    } else {
+                        const swingHigh = Math.max(...recentCandles.map(c => c.high));
+                        cancelPrice = swingHigh + ENGINE_CONFIG.SL_BUFFER;
+                    }
+                } else if (ENGINE_CONFIG.SL_MODE === 'PA_WICK') {
                     cancelPrice = signalDirection === 'BUY' 
                         ? paResult.paCandleLow - ENGINE_CONFIG.SL_BUFFER 
                         : paResult.paCandleHigh + ENGINE_CONFIG.SL_BUFFER;
