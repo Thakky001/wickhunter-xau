@@ -6,11 +6,10 @@ function findFVG(candles) {
 
         // Bullish FVG (Gap ขาขึ้น / โซน Buy)
         if (c3.low > c1.high) {
-            // [Fix Mitigation] โซนถูกทำลายเมื่อราคา "ปิดต่ำกว่าขอบล่างโซน"
-            // (ไม่ใช่แค่ไส้แตะขอบบน ซึ่งทำให้โซนหายเร็วเกินจริง)
+            // [Strict Mitigation] โซนถูกใช้ไปแล้วถ้าราคากลับลงมาแตะ (low <= top)
             let isMitigated = false;
             for (let j = i + 1; j < candles.length; j++) {
-                if (candles[j].close < c1.high) {
+                if (candles[j].low <= c3.low) {
                     isMitigated = true;
                     break;
                 }
@@ -27,10 +26,10 @@ function findFVG(candles) {
         }
         // Bearish FVG (Gap ขาลง / โซน Sell)
         else if (c3.high < c1.low) {
-            // [Fix Mitigation] โซนถูกทำลายเมื่อราคา "ปิดสูงกว่าขอบบนโซน"
+            // [Strict Mitigation] โซนถูกใช้ไปแล้วถ้าราคากลับขึ้นมาแตะ (high >= bottom)
             let isMitigated = false;
             for (let j = i + 1; j < candles.length; j++) {
-                if (candles[j].close > c1.low) {
+                if (candles[j].high >= c3.high) {
                     isMitigated = true;
                     break;
                 }
@@ -63,10 +62,10 @@ function findOrderBlock(candles) {
 
         // Bullish OB (โซน Buy): แท่งแดงสุดท้าย ก่อนแท่งเขียวพุ่งทะลุ High เดิม
         if (isPrevBearish && isCurrBullish && curr.close > prev.high) {
-            // [Fix Mitigation] โซนถูกทำลายเมื่อราคา "ปิดต่ำกว่าขอบล่าง OB"
+            // [Strict Mitigation] โซนถูกใช้ไปแล้วถ้าราคากลับลงมาแตะ (low <= top)
             let isMitigated = false;
             for (let j = i + 1; j < candles.length; j++) {
-                if (candles[j].close < prev.low) {
+                if (candles[j].low <= prev.high) {
                     isMitigated = true;
                     break;
                 }
@@ -83,10 +82,10 @@ function findOrderBlock(candles) {
         }
         // Bearish OB (โซน Sell): แท่งเขียวสุดท้าย ก่อนแท่งแดงเทขายรุนแรง
         else if (isPrevBullish && isCurrBearish && curr.close < prev.low) {
-            // [Fix Mitigation] โซนถูกทำลายเมื่อราคา "ปิดสูงกว่าขอบบน OB"
+            // [Strict Mitigation] โซนถูกใช้ไปแล้วถ้าราคากลับขึ้นมาแตะ (high >= bottom)
             let isMitigated = false;
             for (let j = i + 1; j < candles.length; j++) {
-                if (candles[j].close > prev.high) {
+                if (candles[j].high >= prev.low) {
                     isMitigated = true;
                     break;
                 }
@@ -165,22 +164,48 @@ function checkPriceActionInZone(candle, zone) {
 }
 
 function checkChoCh(m5Candles, direction) {
-    const lookback = MATH_CONFIG.CHOCH_LOOKBACK;
-    if (m5Candles.length < (lookback + 1)) return false;
+    if (m5Candles.length < 5) return false;
 
     const paCandle = m5Candles[m5Candles.length - 1];
-    const prevCandles = m5Candles.slice(m5Candles.length - 1 - lookback, m5Candles.length - 1);
 
     if (direction === 'BUY') {
-        // เปรียบเทียบกับ max(Close) ของ 3 แท่งก่อนหน้า (ไม่ใช่ High)
-        const maxClose = Math.max(...prevCandles.map(c => c.close));
-        return paCandle.close > maxClose;
+        // หา Swing High (Fractal High) ล่าสุด ย้อนหลังแบบละเอียด
+        let targetHigh = null;
+        for (let i = m5Candles.length - 3; i >= 2; i--) {
+            const c = m5Candles[i];
+            if (c.high > m5Candles[i - 1].high && c.high > m5Candles[i - 2].high &&
+                c.high > m5Candles[i + 1].high && c.high > m5Candles[i + 2].high) {
+                targetHigh = c.high;
+                break;
+            }
+        }
+        // Fallback: หากไม่พบ Fractal High ในข้อมูลเลย ให้ใช้จุดสูงสุดย้อนหลัง 10 แท่ง
+        if (targetHigh === null) {
+            const prevCandles = m5Candles.slice(-Math.min(11, m5Candles.length), -1);
+            targetHigh = Math.max(...prevCandles.map(c => c.high));
+        }
+        
+        return paCandle.close > targetHigh;
     }
 
     if (direction === 'SELL') {
-        // เปรียบเทียบกับ min(Close) ของ 3 แท่งก่อนหน้า (ไม่ใช่ Low)
-        const minClose = Math.min(...prevCandles.map(c => c.close));
-        return paCandle.close < minClose;
+        // หา Swing Low (Fractal Low) ล่าสุด ย้อนหลังแบบละเอียด
+        let targetLow = null;
+        for (let i = m5Candles.length - 3; i >= 2; i--) {
+            const c = m5Candles[i];
+            if (c.low < m5Candles[i - 1].low && c.low < m5Candles[i - 2].low &&
+                c.low < m5Candles[i + 1].low && c.low < m5Candles[i + 2].low) {
+                targetLow = c.low;
+                break;
+            }
+        }
+        // Fallback: หากไม่พบ Fractal Low ในข้อมูลเลย ให้ใช้จุดต่ำสุดย้อนหลัง 10 แท่ง
+        if (targetLow === null) {
+            const prevCandles = m5Candles.slice(-Math.min(11, m5Candles.length), -1);
+            targetLow = Math.min(...prevCandles.map(c => c.low));
+        }
+
+        return paCandle.close < targetLow;
     }
 
     return false;
@@ -217,4 +242,20 @@ function getHTFTrend(h1Candles) {
     return 'NEUTRAL';
 }
 
-module.exports = { findFVG, findOrderBlock, checkPriceActionInZone, checkChoCh, getHTFTrend };
+// ─── H1 Premium / Discount Zone Finder ─────────────────────────────────────────
+function getTradingRange(h1Candles, lookback = 48) {
+    if (h1Candles.length === 0) return null;
+    const rangeCandles = h1Candles.slice(-Math.min(lookback, h1Candles.length));
+    const highs = rangeCandles.map(c => c.high);
+    const lows = rangeCandles.map(c => c.low);
+    const swingHigh = Math.max(...highs);
+    const swingLow = Math.min(...lows);
+    const midpoint = swingLow + (swingHigh - swingLow) * 0.5;
+    return {
+        high: swingHigh,
+        low: swingLow,
+        midpoint: midpoint
+    };
+}
+
+module.exports = { findFVG, findOrderBlock, checkPriceActionInZone, checkChoCh, getHTFTrend, getTradingRange };

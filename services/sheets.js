@@ -29,9 +29,29 @@ async function ensureSheetHeader(sheetName, range, headers) {
 async function ensureHeaders() {
     if (!sheetsClient) return;
     try {
+        // ดึงรายชื่อชีต (tabs) ทั้งหมดที่มีในไฟล์ปัจจุบัน
+        const metadata = await sheetsClient.spreadsheets.get({ spreadsheetId });
+        const sheetNames = metadata.data.sheets.map(s => s.properties.title);
+
+        const requests = [];
+        if (!sheetNames.includes('Signals')) {
+            requests.push({ addSheet: { properties: { title: 'Signals' } } });
+        }
+        if (!sheetNames.includes('BotStatus')) {
+            requests.push({ addSheet: { properties: { title: 'BotStatus' } } });
+        }
+
+        if (requests.length > 0) {
+            console.log('📝 [Sheets]: กำลังสร้างแท็บที่ขาดหายไป...', requests.map(r => r.addSheet.properties.title).join(', '));
+            await sheetsClient.spreadsheets.batchUpdate({
+                spreadsheetId,
+                requestBody: { requests }
+            });
+        }
+
         await ensureSheetHeader('Signals', 'A1:I1', SIGNALS_HEADERS);
         await ensureSheetHeader('BotStatus', 'A1:E1', BOT_STATUS_HEADERS);
-        console.log('✅ [Sheets]: ตรวจสอบหัวตารางเรียบร้อย');
+        console.log('✅ [Sheets]: ตรวจสอบและสร้างหัวตารางเรียบร้อย');
     } catch (err) {
         console.warn('⚠️  [Sheets]: ensureHeaders() ล้มเหลว →', err.message);
     }
@@ -122,4 +142,66 @@ async function updateBotStatus(data) {
     }
 }
 
-module.exports = { init, appendSignal, updateBotStatus };
+async function loadTradesFromSheet() {
+    if (!sheetsClient) return [];
+    try {
+        const res = await sheetsClient.spreadsheets.values.get({
+            spreadsheetId,
+            range: 'Signals!A:I'
+        });
+        const rows = res.data.values;
+        if (!rows || rows.length <= 1) return [];
+
+        const dataRows = rows.slice(1);
+        const tradeGroups = {};
+
+        for (let row of dataRows) {
+            const timestamp = row[0];
+            const direction = row[2];
+            const entry = row[3];
+            const type = row[8]; // คอลัมน์ที่ 9: ประเภท
+
+            if (!entry || !type) continue;
+
+            const key = `${direction}_${entry}`;
+            if (!tradeGroups[key]) {
+                tradeGroups[key] = {
+                    timestamp,
+                    direction,
+                    entry: parseFloat(entry),
+                    events: []
+                };
+            }
+            tradeGroups[key].events.push(type);
+        }
+
+        const trades = [];
+        for (let key in tradeGroups) {
+            const group = tradeGroups[key];
+            let outcome = 'PENDING';
+
+            if (group.events.includes('TP2_HIT') || group.events.includes('TP1_HIT')) {
+                outcome = 'WIN';
+            } else if (group.events.includes('SL_HIT')) {
+                outcome = 'LOSS';
+            } else if (group.events.includes('TRIGGERED')) {
+                outcome = 'PENDING';
+            } else {
+                continue; // ละเว้น PRE_ALERT, EXPIRED, INVALIDATED
+            }
+
+            trades.push({
+                timestamp: group.timestamp,
+                direction: group.direction,
+                entry: group.entry,
+                outcome
+            });
+        }
+        return trades;
+    } catch (err) {
+        console.warn('⚠️  [Sheets]: loadTradesFromSheet() ล้มเหลว →', err.message);
+        return [];
+    }
+}
+
+module.exports = { init, appendSignal, updateBotStatus, loadTradesFromSheet };

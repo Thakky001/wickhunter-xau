@@ -67,7 +67,13 @@ app.listen(keys.PORT, async () => {
     console.log(`======================================\n`);
 
     // Initialize Google Sheets
-    await sheets.init();
+    const sheetsConnected = await sheets.init();
+    if (sheetsConnected) {
+        console.log('🔄 [Sheets]: กำลังเริ่มดึงประวัติจากชีตเพื่อคำนวณ Win Rate...');
+        const pastTrades = await sheets.loadTradesFromSheet();
+        dashboardState.initTrades(pastTrades);
+        console.log(`📊 [Sheets]: Sync ประวัติการเทรดย้อนหลังสำเร็จ พบทั้งหมด ${pastTrades.length} ไม้`);
+    }
 
     // สั่งให้เปิดท่อ WebSocket รับราคาทองคำทันทีที่รันเซิร์ฟเวอร์เสร็จ
     startPriceStream();

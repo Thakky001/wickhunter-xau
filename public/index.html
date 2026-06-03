@@ -520,6 +520,16 @@
                     <div class="card-value" style="font-size:15px;" id="val-scan-time">—</div>
                     <div class="card-sub" id="sub-scan-time">Waiting for first scan…</div>
                 </div>
+                <div class="card" id="card-daily-winrate">
+                    <div class="card-label">Today's Win Rate</div>
+                    <div class="card-value" id="val-daily-win-rate" style="color: var(--gold);">—</div>
+                    <div class="card-sub" id="sub-daily-win-loss">0 W / 0 L</div>
+                </div>
+                <div class="card" id="card-monthly-winrate">
+                    <div class="card-label">Monthly Win Rate</div>
+                    <div class="card-value" id="val-monthly-win-rate" style="color: var(--green);">—</div>
+                    <div class="card-sub" id="sub-monthly-win-loss">0 W / 0 L</div>
+                </div>
             </div>
         </section>
 
@@ -622,6 +632,7 @@
                 case 'SCANNING': return 'badge-blue';
                 case 'WAITING_WICK_BREAK': return 'badge-yellow';
                 case 'TRIGGERED': return 'badge-green';
+                case 'MONITORING_TRADE': return 'badge-yellow';
                 default: return 'badge-gray';
             }
         }
@@ -631,6 +642,9 @@
                 case 'PRE_ALERT': return 'pre-alert';
                 case 'TRIGGERED': return 'triggered';
                 case 'INVALIDATED': return 'invalidated';
+                case 'TP1_HIT': return 'triggered';
+                case 'TP2_HIT': return 'triggered';
+                case 'SL_HIT': return 'invalidated';
                 default: return '';
             }
         }
@@ -640,6 +654,9 @@
                 case 'PRE_ALERT': return '⏳ PRE ALERT';
                 case 'TRIGGERED': return '🔥 TRIGGERED';
                 case 'INVALIDATED': return '❌ INVALIDATED';
+                case 'TP1_HIT': return '🎯 TP1 HIT';
+                case 'TP2_HIT': return '🔥 TP2 HIT';
+                case 'SL_HIT': return '❌ SL HIT';
                 default: return type;
             }
         }
@@ -655,6 +672,8 @@
                 ? 'Waiting for wick breakout…'
                 : state.botState === 'TRIGGERED'
                 ? 'Signal triggered!'
+                : state.botState === 'MONITORING_TRADE'
+                ? 'Monitoring active trade live…'
                 : '';
 
             // WebSocket card
@@ -672,6 +691,13 @@
                 $('val-scan-time').textContent = fmtTime(state.lastScanTime);
                 $('sub-scan-time').textContent = fmtDateTime(state.lastScanTime);
             }
+
+            // Win Rates (Today & Monthly)
+            const wr = state.winRate || { daily: { win: 0, loss: 0, rate: 0 }, monthly: { win: 0, loss: 0, rate: 0 } };
+            $('val-daily-win-rate').textContent = `${fmt(wr.daily.rate, 1)}%`;
+            $('sub-daily-win-loss').textContent = `${wr.daily.win} W / ${wr.daily.loss} L`;
+            $('val-monthly-win-rate').textContent = `${fmt(wr.monthly.rate, 1)}%`;
+            $('sub-monthly-win-loss').textContent = `${wr.monthly.win} W / ${wr.monthly.loss} L`;
 
             // M5 Candle
             const m5 = state.lastM5 || {};
@@ -794,29 +820,32 @@
         forceScanBtn.addEventListener('click', forceScan);
 
         function connectSSE() {
-            const es = new EventSource('/events');
+            const evtSource = new EventSource('/events');
 
-            es.onopen = () => {
+            evtSource.onopen = () => {
+                console.log('✅ SSE Connected');
                 sseDot.className = 'live';
-                sseLabel.textContent = 'Live';
+                sseLabel.textContent = 'Live Updates';
                 reconnectBanner.classList.remove('visible');
                 reconnectDelay = 3000;
             };
 
-            es.onmessage = (e) => {
+            evtSource.onmessage = (event) => {
                 try {
-                    const state = JSON.parse(e.data);
-                    render(state);
-                } catch (err) {
-                    console.error('SSE parse error:', err);
+                    const data = JSON.parse(event.data);
+                    render(data);
+                } catch (e) {
+                    console.error('❌ SSE JSON Parse Error:', e);
                 }
             };
 
-            es.onerror = () => {
+            evtSource.onerror = (err) => {
+                console.warn('⚠️ SSE Connection Error, reconnecting...');
                 sseDot.className = '';
                 sseLabel.textContent = 'Disconnected';
                 reconnectBanner.classList.add('visible');
-                es.close();
+                evtSource.close();
+
                 setTimeout(connectSSE, reconnectDelay);
                 reconnectDelay = Math.min(reconnectDelay * 2, 30000);
             };

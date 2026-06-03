@@ -1,5 +1,5 @@
 const { sendSignal } = require('../services/telegram');
-const { findFVG, findOrderBlock, checkPriceActionInZone, checkChoCh, getHTFTrend } = require('./smcMath');
+const { findFVG, findOrderBlock, checkPriceActionInZone, checkChoCh, getHTFTrend, getTradingRange } = require('./smcMath');
 const { getCandles } = require('../services/twelveData');
 const dashboardState = require('../services/dashboardState');
 const sheets = require('../services/sheets');
@@ -7,12 +7,16 @@ const sheets = require('../services/sheets');
 const STATES = {
     SCANNING: 'SCANNING',
     WAITING_WICK_BREAK: 'WAITING_WICK_BREAK',
-    TRIGGERED: 'TRIGGERED'
+    TRIGGERED: 'TRIGGERED',
+    MONITORING_TRADE: 'MONITORING_TRADE'
 };
+
+let activeTrade = null; // เก็บข้อมูลไม้ที่กำลังทำงานอยู่
 
 const ENGINE_CONFIG = {
     SL_MODE: 'SWING_HIGH_LOW',   // 'SWING_HIGH_LOW' (อิงจุดสูงสุด/ต่ำสุดย้อนหลัง), 'PA_WICK' (อิงระดับ M5) หรือ 'ZONE_EDGE'
     SL_BUFFER: 2.0,              // ระยะเผื่อสะบัดปลายไส้ (2.0 USD หรือ 200 จุด)
+    SPREAD_BUFFER: 0.5,          // [NEW] ระยะเผื่อสเปรดสเปรดสำหรับไม้ SELL (0.5 USD หรือ 50 จุด)
     SWING_LOOKBACK_CANDLES: 10,  // จำนวนแท่ง M5 ย้อนหลังที่ใช้หา Swing High/Low
     MAX_SL_POINTS: 15.0,         // จำกัดระยะ SL สูงสุดไม่เกิน 15.0 USD (1,500 จุด)
     MIN_TP_POINTS: 12.0,         // จำกัดระยะ TP ขั้นต่ำไม่น้อยกว่า 12.0 USD (1,200 จุด)
@@ -44,6 +48,7 @@ function clearActiveSignal() {
     signalDirection = '';
     waitingStartedAt = null;
     lastFallbackCheckAt = 0;
+    activeTrade = null;
 }
 
 function isMarketOpen() {
@@ -88,7 +93,7 @@ async function checkMarketLogic() {
             }
         }
 
-        const m5Candles = await getCandles('5', 15);
+        const m5Candles = await getCandles('5', 50);
 
         if (cachedH1Candles.length === 0 || m5Candles.length < 2) {
             console.log(`⚠️  [DEBUG]: ดึงข้อมูลแท่งเทียนไม่สำเร็จหรือได้มาไม่ครบ → ข้ามรอบนี้`);
@@ -105,6 +110,7 @@ async function checkMarketLogic() {
 
         // [HTF Filter] คำนวณทิศทาง H4 จาก H1 ที่มีอยู่แล้ว ไม่ใช้ API เพิ่ม
         const htfTrend = getHTFTrend(closedH1Candles);
+        const tradingRange = getTradingRange(closedH1Candles);
 
         const closedM5Candle = m5Candles[m5Candles.length - 2];
         const closedM5Array = m5Candles.slice(0, -1);
@@ -138,6 +144,18 @@ async function checkMarketLogic() {
         let foundPA = false;
         let foundValidSignal = false;
         for (let zone of allZones) {
+            // [Premium/Discount Filter]
+            if (tradingRange) {
+                if (zone.type === 'BUY_ZONE' && zone.top > tradingRange.midpoint) {
+                    console.log(`   🚫 [Premium/Discount] ข้าม BUY zone [${zone.name}] (${zone.top.toFixed(2)}) เพราะอยู่สูงกว่า Midpoint H1 (${tradingRange.midpoint.toFixed(2)}) (โซน Premium แพงเกินไป)`);
+                    continue;
+                }
+                if (zone.type === 'SELL_ZONE' && zone.bottom < tradingRange.midpoint) {
+                    console.log(`   🚫 [Premium/Discount] ข้าม SELL zone [${zone.name}] (${zone.bottom.toFixed(2)}) เพราะอยู่ต่ำกว่า Midpoint H1 (${tradingRange.midpoint.toFixed(2)}) (โซน Discount ถูกเกินไป)`);
+                    continue;
+                }
+            }
+
             // [HTF Filter] ข้ามโซนที่สวนทางกับ HTF Trend
             if (htfTrend === 'BEARISH' && zone.type === 'BUY_ZONE') {
                 console.log(`   🚫 [HTF] ข้าม ${zone.name} เพราะ H4 Bearish → ห้าม BUY`);
@@ -174,14 +192,14 @@ async function checkMarketLogic() {
                             cancelPrice = swingLow - ENGINE_CONFIG.SL_BUFFER;
                         } else {
                             const swingHigh = Math.max(...recentCandles.map(c => c.high));
-                            cancelPrice = swingHigh + ENGINE_CONFIG.SL_BUFFER;
+                            cancelPrice = swingHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
                         }
                     } else {
                         // [Bug#3 Fix] CANDLE_CLOSE mode ต้องใช้ PA_WICK เสมอ
                         // เพราะ entry คือ candle.close (กลางแท่ง) ถ้าใช้ Zone Edge SL จะกว้างเกิน R:R บิดเบือน
                         cancelPrice = signalDirection === 'BUY' 
                             ? paResult.paCandleLow - ENGINE_CONFIG.SL_BUFFER 
-                            : paResult.paCandleHigh + ENGINE_CONFIG.SL_BUFFER;
+                            : paResult.paCandleHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
                     }
 
                     let risk = Math.abs(referenceWickPrice - cancelPrice);
@@ -235,13 +253,18 @@ async function checkMarketLogic() {
                         `🚀 <b>Current Price:</b> ${referenceWickPrice.toFixed(2)}`;
 
                     await sendSignal(msg);
-                    console.log(`🟢 [SMC Engine]: สัญญาณถูกส่งแล้ว! รีเซ็ตระบบกลับสู่โหมดสแกนใน 5 นาที...`);
-
-                    setTimeout(() => {
-                        currentState = STATES.SCANNING;
-                        console.log("🔄 [SMC Engine]: กลับสู่โหมด SCANNING รอโซนถัดไป");
-                        dashboardState.update({ botState: currentState });
-                    }, 300000);
+                    activeTrade = {
+                        direction: signalDirection,
+                        entry: referenceWickPrice,
+                        sl: cancelPrice,
+                        tp1: tp1Price,
+                        tp2: tp2Price,
+                        isTp1Hit: false,
+                        time: new Date().toISOString()
+                    };
+                    currentState = STATES.MONITORING_TRADE;
+                    console.log(`🟢 [SMC Engine]: สัญญาณถูกส่งแล้ว! เปลี่ยนสถานะบอทเป็น MONITORING_TRADE`);
+                    dashboardState.update({ botState: currentState });
 
                     break; // ออกจาก loop
                 }
@@ -256,14 +279,16 @@ async function checkMarketLogic() {
                         cancelPrice = swingLow - ENGINE_CONFIG.SL_BUFFER;
                     } else {
                         const swingHigh = Math.max(...recentCandles.map(c => c.high));
-                        cancelPrice = swingHigh + ENGINE_CONFIG.SL_BUFFER;
+                        cancelPrice = swingHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
                     }
                 } else if (ENGINE_CONFIG.SL_MODE === 'PA_WICK') {
                     cancelPrice = signalDirection === 'BUY' 
                         ? paResult.paCandleLow - ENGINE_CONFIG.SL_BUFFER 
-                        : paResult.paCandleHigh + ENGINE_CONFIG.SL_BUFFER;
+                        : paResult.paCandleHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
                 } else {
-                    cancelPrice = paResult.cancelPrice;
+                    cancelPrice = signalDirection === 'BUY'
+                        ? paResult.cancelPrice
+                        : paResult.cancelPrice + ENGINE_CONFIG.SPREAD_BUFFER;
                 }
 
                 let risk = Math.abs(referenceWickPrice - cancelPrice);
@@ -328,6 +353,8 @@ async function checkMarketLogic() {
         }
         console.log(`─────────────────────────────────────────`);
     }
+    } catch (error) {
+        console.error("❌ [SMC Engine Error] checkMarketLogic failed:", error);
     } finally {
         isCheckingMarket = false;
     }
@@ -380,13 +407,15 @@ async function expireWaitingSignal() {
 }
 
 async function checkWaitingGuard() {
-    if (currentState !== STATES.WAITING_WICK_BREAK || isCheckingWaitingGuard) return;
+    if ((currentState !== STATES.WAITING_WICK_BREAK && currentState !== STATES.MONITORING_TRADE) || isCheckingWaitingGuard) return;
 
     const now = Date.now();
-    if (waitingStartedAt && now - waitingStartedAt >= PRE_ALERT_TIMEOUT_MS) {
+    if (currentState === STATES.WAITING_WICK_BREAK && waitingStartedAt && now - waitingStartedAt >= PRE_ALERT_TIMEOUT_MS) {
         isCheckingWaitingGuard = true;
         try {
             await expireWaitingSignal();
+        } catch (error) {
+            console.error("❌ [SMC Engine Error] expireWaitingSignal failed:", error);
         } finally {
             isCheckingWaitingGuard = false;
         }
@@ -401,6 +430,10 @@ async function checkWaitingGuard() {
     try {
         console.log("🛰️ [SMC Engine]: Finnhub tick ขาดช่วง → เช็ก M5 จาก TwelveData fallback");
         const m5Candles = await getCandles('5', 2);
+        if (!m5Candles || m5Candles.length === 0) {
+            console.log("⚠️ [SMC Engine]: fallback ไม่สามารถดึงแท่ง M5 ได้");
+            return;
+        }
         const latestCandle = m5Candles[m5Candles.length - 1];
 
         if (!latestCandle) {
@@ -408,19 +441,37 @@ async function checkWaitingGuard() {
             return;
         }
 
-        if (signalDirection === 'BUY') {
-            if (latestCandle.low <= cancelPrice) {
-                await processTickData(latestCandle.low, 'fallback');
-            } else if (latestCandle.high >= referenceWickPrice) {
-                await processTickData(latestCandle.high, 'fallback');
+        if (currentState === STATES.WAITING_WICK_BREAK) {
+            if (signalDirection === 'BUY') {
+                if (latestCandle.low <= cancelPrice) {
+                    await processTickData(latestCandle.low, 'fallback');
+                } else if (latestCandle.high >= referenceWickPrice) {
+                    await processTickData(latestCandle.high, 'fallback');
+                }
+            } else if (signalDirection === 'SELL') {
+                if (latestCandle.high >= cancelPrice) {
+                    await processTickData(latestCandle.high, 'fallback');
+                } else if (latestCandle.low <= referenceWickPrice) {
+                    await processTickData(latestCandle.low, 'fallback');
+                }
             }
-        } else if (signalDirection === 'SELL') {
-            if (latestCandle.high >= cancelPrice) {
-                await processTickData(latestCandle.high, 'fallback');
-            } else if (latestCandle.low <= referenceWickPrice) {
-                await processTickData(latestCandle.low, 'fallback');
+        } else if (currentState === STATES.MONITORING_TRADE && activeTrade) {
+            if (activeTrade.direction === 'BUY') {
+                if (latestCandle.low <= activeTrade.sl) {
+                    await processTickData(latestCandle.low, 'fallback');
+                } else if (latestCandle.high >= activeTrade.tp1) {
+                    await processTickData(latestCandle.high, 'fallback');
+                }
+            } else if (activeTrade.direction === 'SELL') {
+                if (latestCandle.high >= activeTrade.sl) {
+                    await processTickData(latestCandle.high, 'fallback');
+                } else if (latestCandle.low <= activeTrade.tp1) {
+                    await processTickData(latestCandle.low, 'fallback');
+                }
             }
         }
+    } catch (error) {
+        console.error("❌ [SMC Engine Error] checkWaitingGuard fallback failed:", error);
     } finally {
         isCheckingWaitingGuard = false;
     }
@@ -432,6 +483,122 @@ async function processTickData(currentPrice, source = 'tick') {
 
     if (source === 'tick') {
         lastTickAt = Date.now();
+    }
+
+    if (currentState === STATES.MONITORING_TRADE && activeTrade) {
+        const direction = activeTrade.direction;
+        let isSlHit = false;
+        let isTp1Hit = false;
+        let isTp2Hit = false;
+
+        if (direction === 'BUY') {
+            if (price <= activeTrade.sl) isSlHit = true;
+            if (!activeTrade.isTp1Hit && price >= activeTrade.tp1) isTp1Hit = true;
+            if (price >= activeTrade.tp2) isTp2Hit = true;
+        } else if (direction === 'SELL') {
+            if (price >= activeTrade.sl) isSlHit = true;
+            if (!activeTrade.isTp1Hit && price <= activeTrade.tp1) isTp1Hit = true;
+            if (price <= activeTrade.tp2) isTp2Hit = true;
+        }
+
+        const sourceNote = source === 'fallback'
+            ? '\n\n⚠️ ตรวจพบจาก TwelveData fallback'
+            : '';
+
+        if (isSlHit) {
+            const invalidDir = direction;
+            const invalidEntry = activeTrade.entry;
+            const invalidSL = activeTrade.sl;
+
+            const logMsg = `❌ <b>[SL HIT] ออเดอร์ ${invalidDir} ชน Stop Loss</b>\n\n` +
+                `📍 Entry: ${invalidEntry.toFixed(2)}\n` +
+                `🛑 SL: ${invalidSL.toFixed(2)}\n` +
+                `🎯 TP1: ${activeTrade.tp1.toFixed(2)}\n` +
+                `🎯 TP2: ${activeTrade.tp2.toFixed(2)}\n\n` +
+                `📉 ชนที่ราคา: ${price.toFixed(2)} (ขาดทุน)${sourceNote}`;
+            
+            await sendSignal(logMsg);
+            
+            dashboardState.addSignal({
+                type: 'SL_HIT',
+                direction: invalidDir,
+                entry: invalidEntry,
+                sl: invalidSL,
+                currentPrice: price,
+                time: new Date().toISOString()
+            });
+            sheets.appendSignal({
+                type: 'SL_HIT',
+                direction: invalidDir,
+                entry: invalidEntry,
+                sl: invalidSL,
+                currentPrice: price
+            });
+
+            currentState = STATES.SCANNING;
+            clearActiveSignal();
+            dashboardState.update({ botState: currentState });
+            return;
+        }
+
+        if (isTp1Hit) {
+            activeTrade.isTp1Hit = true;
+            activeTrade.sl = activeTrade.entry; // ขยับ SL มาบังทุน (Breakeven)
+
+            const logMsg = `🎯 <b>[TP1 HIT] ออเดอร์ ${direction} ชน Take Profit 1 (RR 1:2)</b>\n\n` +
+                `📍 Entry: ${activeTrade.entry.toFixed(2)}\n` +
+                `🎯 TP1: ${activeTrade.tp1.toFixed(2)}\n` +
+                `🛡️ ระบบปรับ SL มาบังทุน (Breakeven) ที่: ${activeTrade.entry.toFixed(2)} เรียบร้อย\n\n` +
+                `📈 ชนที่ราคา: ${price.toFixed(2)} (เก็บกำไรครึ่งแรก)${sourceNote}`;
+            
+            await sendSignal(logMsg);
+
+            dashboardState.addSignal({
+                type: 'TP1_HIT',
+                direction,
+                entry: activeTrade.entry,
+                sl: activeTrade.sl,
+                currentPrice: price,
+                time: new Date().toISOString()
+            });
+            sheets.appendSignal({
+                type: 'TP1_HIT',
+                direction,
+                entry: activeTrade.entry,
+                sl: activeTrade.sl,
+                currentPrice: price
+            });
+        }
+
+        if (isTp2Hit) {
+            const logMsg = `🔥 <b>[TP2 HIT] ออเดอร์ ${direction} ชน Take Profit 2 (RR 1:3)</b>\n\n` +
+                `📍 Entry: ${activeTrade.entry.toFixed(2)}\n` +
+                `🎯 TP2: ${activeTrade.tp2.toFixed(2)}\n\n` +
+                `📈 ชนที่ราคา: ${price.toFixed(2)} (ปิดออเดอร์ทำกำไรสูงสุด)${sourceNote}`;
+            
+            await sendSignal(logMsg);
+
+            dashboardState.addSignal({
+                type: 'TP2_HIT',
+                direction,
+                entry: activeTrade.entry,
+                sl: activeTrade.sl,
+                currentPrice: price,
+                time: new Date().toISOString()
+            });
+            sheets.appendSignal({
+                type: 'TP2_HIT',
+                direction,
+                entry: activeTrade.entry,
+                sl: activeTrade.sl,
+                currentPrice: price
+            });
+
+            currentState = STATES.SCANNING;
+            clearActiveSignal();
+            dashboardState.update({ botState: currentState });
+            return;
+        }
     }
 
     if (currentState === STATES.WAITING_WICK_BREAK) {
@@ -537,13 +704,18 @@ async function processTickData(currentPrice, source = 'tick') {
                 `🚀 <b>Current Price:</b> ${price.toFixed(2)}${sourceNote}`;
 
             await sendSignal(msg);
-            console.log(`🟢 [SMC Engine]: สัญญาณถูกส่งแล้ว! รีเซ็ตระบบกลับสู่โหมดสแกนใน 5 นาที...`);
-
-            setTimeout(() => {
-                currentState = STATES.SCANNING;
-                console.log("🔄 [SMC Engine]: กลับสู่โหมด SCANNING รอโซนถัดไป");
-                dashboardState.update({ botState: currentState });
-            }, 300000);
+            activeTrade = {
+                direction: signalDirection,
+                entry: referenceWickPrice,
+                sl: slPrice,
+                tp1: tp1Price,
+                tp2: tp2Price,
+                isTp1Hit: false,
+                time: new Date().toISOString()
+            };
+            currentState = STATES.MONITORING_TRADE;
+            console.log(`🟢 [SMC Engine]: สัญญาณถูกส่งแล้ว! เปลี่ยนสถานะบอทเป็น MONITORING_TRADE`);
+            dashboardState.update({ botState: currentState });
         }
     }
 }
