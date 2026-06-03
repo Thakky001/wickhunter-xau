@@ -243,14 +243,18 @@ function getHTFTrend(h1Candles) {
 }
 
 // ─── H1 Premium / Discount Zone Finder ─────────────────────────────────────────
-function getTradingRange(h1Candles, lookback = 48) {
+function getTradingRange(h1Candles, lookback = 24) {
     if (h1Candles.length === 0) return null;
     const rangeCandles = h1Candles.slice(-Math.min(lookback, h1Candles.length));
     const highs = rangeCandles.map(c => c.high);
     const lows = rangeCandles.map(c => c.low);
     const swingHigh = Math.max(...highs);
     const swingLow = Math.min(...lows);
-    const midpoint = swingLow + (swingHigh - swingLow) * 0.5;
+    
+    // คำนวณหาค่ามัธยฐาน (Median) ของราคาปิด เพื่อป้องกันสัญญาณหลอกจากการสะบัดของราคา (Spike)
+    const closes = rangeCandles.map(c => c.close).sort((a, b) => a - b);
+    const midpoint = closes[Math.floor(closes.length / 2)];
+    
     return {
         high: swingHigh,
         low: swingLow,
