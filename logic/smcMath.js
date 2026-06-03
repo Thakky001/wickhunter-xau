@@ -105,8 +105,7 @@ function findOrderBlock(candles) {
 }
 
 const MATH_CONFIG = {
-    MIN_CANDLE_SIZE: 1.5, // กรอง Micro-wicks ขนาดแท่ง M5 ต้องกว้างไม่ต่ำกว่า 1.5 USD (150 จุด)
-    CHOCH_LOOKBACK: 3     // เช็กราคาปิดชนะจุดสูงสุด/ต่ำสุดของ 3 แท่งเทียนก่อนหน้า
+    MIN_CANDLE_SIZE: 1.5 // กรอง Micro-wicks ขนาดแท่ง M5 ต้องกว้างไม่ต่ำกว่า 1.5 USD (150 จุด)
 };
 
 function checkPriceActionInZone(candle, zone) {

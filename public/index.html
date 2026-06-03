@@ -206,6 +206,93 @@
             margin-top: 6px;
         }
 
+        /* ── ACTIVE TRADE CARD ── */
+        .active-trade-card {
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+            margin-bottom: 14px;
+            position: relative;
+            overflow: hidden;
+            animation: fadeIn 0.4s ease-out;
+        }
+
+        .active-trade-card.buy-mode {
+            border-color: rgba(63, 185, 80, 0.4);
+            background: linear-gradient(180deg, rgba(63, 185, 80, 0.04) 0%, var(--bg-card) 100%);
+            box-shadow: 0 4px 20px rgba(63, 185, 80, 0.05);
+        }
+
+        .active-trade-card.sell-mode {
+            border-color: rgba(248, 81, 73, 0.4);
+            background: linear-gradient(180deg, rgba(248, 81, 73, 0.04) 0%, var(--bg-card) 100%);
+            box-shadow: 0 4px 20px rgba(248, 81, 73, 0.05);
+        }
+
+        .active-trade-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 10px;
+        }
+
+        .active-badge {
+            font-size: 13px;
+            font-weight: 800;
+            padding: 4px 12px;
+            border-radius: 6px;
+            letter-spacing: 0.5px;
+        }
+        
+        .active-badge.buy {
+            background: var(--green);
+            color: #000;
+        }
+        
+        .active-badge.sell {
+            background: var(--red);
+            color: #fff;
+        }
+
+        .active-time {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .at-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 12px;
+        }
+
+        .at-item {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            padding: 10px 14px;
+            border: 1px solid rgba(255, 255, 255, 0.03);
+        }
+
+        .at-label {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+
+        .at-val {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text);
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
         /* ── BADGES ── */
         .badge {
             display: inline-flex;
@@ -231,8 +318,6 @@
         .badge-green { background: rgba(63,185,80,0.15); color: var(--green); border: 1px solid rgba(63,185,80,0.3); }
         .badge-red { background: rgba(248,81,73,0.15); color: var(--red); border: 1px solid rgba(248,81,73,0.3); }
         .badge-gray { background: rgba(139,148,158,0.15); color: var(--text-muted); border: 1px solid rgba(139,148,158,0.3); }
-
-        /* ── BOTTOM GRID ── */
         .bottom-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -530,6 +615,50 @@
                     <div class="card-value" id="val-monthly-win-rate" style="color: var(--green);">—</div>
                     <div class="card-sub" id="sub-monthly-win-loss">0 W / 0 L</div>
                 </div>
+                <div class="card" id="card-midpoint">
+                    <div class="card-label">H1 Midpoint (24H)</div>
+                    <div class="card-value" style="font-size:18px;" id="val-midpoint">—</div>
+                    <div class="card-sub" id="sub-midpoint">Range: —</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ── ACTIVE TRADE MONITORING ── -->
+        <section id="active-trade-section" style="display: none;" aria-label="Active Trade">
+            <div class="section-title">⚡ Active Trade Monitoring</div>
+            <div class="card active-trade-card" id="active-trade-card">
+                <div class="active-trade-header">
+                    <span class="active-badge buy" id="active-direction-badge">BUY</span>
+                    <span class="active-time" id="active-trade-time">—</span>
+                </div>
+                <div class="active-trade-body">
+                    <div class="at-grid">
+                        <div class="at-item">
+                            <div class="at-label">Entry Price</div>
+                            <div class="at-val" id="active-entry">—</div>
+                        </div>
+                        <div class="at-item">
+                            <div class="at-label">Current Price</div>
+                            <div class="at-val" id="active-current" style="color: var(--blue);">—</div>
+                        </div>
+                        <div class="at-item">
+                            <div class="at-label">Current SL</div>
+                            <div class="at-val" id="active-sl" style="color: var(--red);">—</div>
+                        </div>
+                        <div class="at-item">
+                            <div class="at-label">TP 1 (RR 1:2)</div>
+                            <div class="at-val" id="active-tp1" style="color: var(--yellow);">—</div>
+                        </div>
+                        <div class="at-item">
+                            <div class="at-label">TP 2 (RR 1:3)</div>
+                            <div class="at-val" id="active-tp2" style="color: var(--green);">—</div>
+                        </div>
+                        <div class="at-item">
+                            <div class="at-label">Status</div>
+                            <div class="at-val" id="active-status">—</div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </section>
 
@@ -714,6 +843,50 @@
             $('val-m5-low').textContent = fmt(m5.low);
             $('val-m5-close').className = `ohlc-value ${candleClass}`;
             $('val-m5-close').textContent = fmt(m5.close);
+
+            // Midpoint card
+            const tr = state.tradingRange;
+            if (tr && tr.midpoint != null) {
+                $('val-midpoint').textContent = fmt(tr.midpoint);
+                $('sub-midpoint').textContent = `Range: ${fmt(tr.low)} - ${fmt(tr.high)}`;
+            } else {
+                $('val-midpoint').textContent = '—';
+                $('sub-midpoint').textContent = 'Range: —';
+            }
+
+            // Active Trade Section
+            const atSection = $('active-trade-section');
+            const at = state.activeTrade;
+            if (at && state.botState === 'MONITORING_TRADE') {
+                atSection.style.display = 'block';
+                const card = $('active-trade-card');
+                const badge = $('active-direction-badge');
+                
+                // Set direction class
+                if (at.direction === 'BUY') {
+                    card.className = 'card active-trade-card buy-mode';
+                    badge.textContent = 'BUY';
+                    badge.className = 'active-badge buy';
+                } else {
+                    card.className = 'card active-trade-card sell-mode';
+                    badge.textContent = 'SELL';
+                    badge.className = 'active-badge sell';
+                }
+                
+                $('active-trade-time').textContent = fmtDateTime(at.time);
+                $('active-entry').textContent = fmt(at.entry);
+                $('active-current').textContent = fmt(state.lastM5 ? state.lastM5.close : null);
+                $('active-sl').textContent = fmt(at.sl);
+                $('active-tp1').textContent = fmt(at.tp1);
+                $('active-tp2').textContent = fmt(at.tp2);
+                
+                // Status label
+                let statusText = at.isTp1Hit ? '🎯 TP1 Hit (SL at Entry)' : '⚡ Active';
+                $('active-status').textContent = statusText;
+                $('active-status').style.color = at.isTp1Hit ? 'var(--yellow)' : 'var(--text)';
+            } else {
+                atSection.style.display = 'none';
+            }
 
             // Last Signal
             renderLastSignal(state.lastSignal);

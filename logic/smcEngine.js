@@ -21,7 +21,7 @@ const ENGINE_CONFIG = {
     MAX_SL_POINTS: 15.0,         // จำกัดระยะ SL สูงสุดไม่เกิน 15.0 USD (1,500 จุด)
     MIN_TP_POINTS: 12.0,         // จำกัดระยะ TP ขั้นต่ำไม่น้อยกว่า 12.0 USD (1,200 จุด)
     ENTRY_MODE: 'CANDLE_CLOSE',  // [Fix#2] สลับเป็น CANDLE_CLOSE เพื่อเข้าที่ราคาปิดแท่ง PA (ไม่ใช่ยอด High ที่เป็น Resistance)
-    MAX_ZONE_AGE_HOURS: 72       // กรองโซน H1 ย้อนหลังไม่เกิน 72 ชั่วโมง (3 วัน)
+    MAX_ZONE_AGE_HOURS: 48       // กรองโซน H1 ย้อนหลังไม่เกิน 48 ชั่วโมง (2 วัน)
 };
 
 const PRE_ALERT_TIMEOUT_MS = 15 * 60 * 1000;
@@ -49,6 +49,7 @@ function clearActiveSignal() {
     waitingStartedAt = null;
     lastFallbackCheckAt = 0;
     activeTrade = null;
+    dashboardState.update({ activeTrade: null });
 }
 
 function isMarketOpen() {
@@ -119,6 +120,9 @@ async function checkMarketLogic() {
         console.log(`\n─────────────────────────────────────────`);
         console.log(`🔍 [SCAN] ${now} | State: ${currentState}`);
         console.log(`   📊 H1 Zones พบทั้งหมด: ${allZones.length} โซน (FVG: ${fvgs.length}, OB: ${obs.length})`);
+        if (tradingRange) {
+            console.log(`   📐 [Midpoint] Median Close 24H: ${tradingRange.midpoint.toFixed(2)} | Range: ${tradingRange.low.toFixed(2)} - ${tradingRange.high.toFixed(2)}`);
+        }
         console.log(`   📈 [HTF Trend H4]: ${htfTrend} → รับสัญญาณ: ${htfTrend === 'BULLISH' ? 'BUY เท่านั้น' : htfTrend === 'BEARISH' ? 'SELL เท่านั้น' : 'ทั้ง BUY และ SELL (Neutral)'}`);
         console.log(`   🕯️  M5 แท่งปิดล่าสุด | O:${closedM5Candle.open.toFixed(2)} H:${closedM5Candle.high.toFixed(2)} L:${closedM5Candle.low.toFixed(2)} C:${closedM5Candle.close.toFixed(2)}`);
         // ───────────────────────────────────────────────────────────────
@@ -132,7 +136,9 @@ async function checkMarketLogic() {
                 high: closedM5Candle.high,
                 low: closedM5Candle.low,
                 close: closedM5Candle.close
-            }
+            },
+            tradingRange: tradingRange,
+            activeTrade: activeTrade
         });
         sheets.updateBotStatus({
             state: currentState,
@@ -264,7 +270,7 @@ async function checkMarketLogic() {
                     };
                     currentState = STATES.MONITORING_TRADE;
                     console.log(`🟢 [SMC Engine]: สัญญาณถูกส่งแล้ว! เปลี่ยนสถานะบอทเป็น MONITORING_TRADE`);
-                    dashboardState.update({ botState: currentState });
+                    dashboardState.update({ botState: currentState, activeTrade });
 
                     break; // ออกจาก loop
                 }
@@ -568,6 +574,7 @@ async function processTickData(currentPrice, source = 'tick') {
                 sl: activeTrade.sl,
                 currentPrice: price
             });
+            dashboardState.update({ activeTrade });
         }
 
         if (isTp2Hit) {
@@ -715,7 +722,7 @@ async function processTickData(currentPrice, source = 'tick') {
             };
             currentState = STATES.MONITORING_TRADE;
             console.log(`🟢 [SMC Engine]: สัญญาณถูกส่งแล้ว! เปลี่ยนสถานะบอทเป็น MONITORING_TRADE`);
-            dashboardState.update({ botState: currentState });
+            dashboardState.update({ botState: currentState, activeTrade });
         }
     }
 }
