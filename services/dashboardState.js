@@ -21,7 +21,8 @@ let localTrades = []; // เก็บประวัติออเดอร์�
 function parseSheetsDate(dateStr) {
     if (!dateStr) return new Date();
     if (dateStr.includes('T') && dateStr.includes('Z')) {
-        return new Date(dateStr);
+        const d = new Date(dateStr);
+        return isNaN(d.getTime()) ? new Date() : d;
     }
     
     try {
@@ -41,10 +42,19 @@ function parseSheetsDate(dateStr) {
         let minute = parseInt(timeParts[1]);
         let second = parseInt(timeParts[2]);
         
-        return new Date(year, month, day, hour, minute, second);
+        const parsedDate = new Date(year, month, day, hour, minute, second);
+        if (!isNaN(parsedDate.getTime())) {
+            return parsedDate;
+        }
     } catch (e) {
-        return new Date(dateStr);
+        // Fallback
     }
+    
+    const fallbackDate = new Date(dateStr);
+    if (!isNaN(fallbackDate.getTime())) {
+        return fallbackDate;
+    }
+    return new Date();
 }
 
 function recalculateWinRates() {
