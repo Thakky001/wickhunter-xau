@@ -1,4 +1,4 @@
-function findFVG(candles) {
+function findFVG(candles, m5Candles = []) {
     let fvgs = [];
     for (let i = 2; i < candles.length; i++) {
         const c1 = candles[i - 2]; 
@@ -12,6 +12,16 @@ function findFVG(candles) {
                 if (candles[j].low <= c3.low) {
                     isMitigated = true;
                     break;
+                }
+            }
+            
+            // เช็กการทำลายโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
+            if (!isMitigated && m5Candles.length > 0) {
+                for (let k = 0; k < m5Candles.length; k++) {
+                    if (m5Candles[k].time >= c3.time && m5Candles[k].low <= c3.low) {
+                        isMitigated = true;
+                        break;
+                    }
                 }
             }
 
@@ -34,6 +44,16 @@ function findFVG(candles) {
                     break;
                 }
             }
+            
+            // เช็กการทำลายโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
+            if (!isMitigated && m5Candles.length > 0) {
+                for (let k = 0; k < m5Candles.length; k++) {
+                    if (m5Candles[k].time >= c3.time && m5Candles[k].high >= c1.low) {
+                        isMitigated = true;
+                        break;
+                    }
+                }
+            }
 
             if (!isMitigated) {
                 fvgs.push({
@@ -48,7 +68,7 @@ function findFVG(candles) {
     return fvgs;
 }
 
-function findOrderBlock(candles) {
+function findOrderBlock(candles, m5Candles = []) {
     let orderBlocks = [];
     for (let i = 1; i < candles.length; i++) {
         const prev = candles[i - 1];
@@ -71,6 +91,16 @@ function findOrderBlock(candles) {
                 }
             }
 
+            // เช็กการทำลายโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
+            if (!isMitigated && m5Candles.length > 0) {
+                for (let k = 0; k < m5Candles.length; k++) {
+                    if (m5Candles[k].time >= curr.time && m5Candles[k].low <= prev.low) {
+                        isMitigated = true;
+                        break;
+                    }
+                }
+            }
+
             if (!isMitigated) {
                 orderBlocks.push({
                     type: 'BUY_ZONE',
@@ -88,6 +118,16 @@ function findOrderBlock(candles) {
                 if (candles[j].high >= prev.high) {
                     isMitigated = true;
                     break;
+                }
+            }
+
+            // เช็กการทำลายโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
+            if (!isMitigated && m5Candles.length > 0) {
+                for (let k = 0; k < m5Candles.length; k++) {
+                    if (m5Candles[k].time >= curr.time && m5Candles[k].high >= prev.high) {
+                        isMitigated = true;
+                        break;
+                    }
                 }
             }
 

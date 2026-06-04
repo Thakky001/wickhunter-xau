@@ -41,6 +41,7 @@ let waitingStartedAt = null;
 let lastTickAt = Date.now();
 let lastFallbackCheckAt = 0;
 let isCheckingWaitingGuard = false;
+let lastTradedCandleTime = null; // เก็บบันทึกเวลาของแท่ง M5 ที่เคยส่งสัญญาณไปแล้ว
 
 function clearActiveSignal() {
     referenceWickPrice = 0;
@@ -105,8 +106,8 @@ async function checkMarketLogic() {
 
         // กรองหาเฉพาะโซนที่สดใหม่ย้อนหลังไม่เกินอายุที่กำหนด (เช่น MAX_ZONE_AGE_HOURS = 24)
         const candlesToScan = closedH1Candles.slice(-ENGINE_CONFIG.MAX_ZONE_AGE_HOURS);
-        const fvgs = findFVG(candlesToScan);
-        const obs = findOrderBlock(candlesToScan);
+        const fvgs = findFVG(candlesToScan, m5Candles);
+        const obs = findOrderBlock(candlesToScan, m5Candles);
         const allZones = [...fvgs, ...obs];
 
         // [HTF Filter] คำนวณทิศทาง H4 จาก H1 ที่มีอยู่แล้ว ไม่ใช้ API เพิ่ม
@@ -155,8 +156,12 @@ async function checkMarketLogic() {
 
         let foundPA = false;
         let foundValidSignal = false;
-        for (let zone of allZones) {
-            // [Premium/Discount Filter] - ปิดชั่วคราวเพื่อให้บอท Follow Trend ได้ดีขึ้น
+
+        if (lastTradedCandleTime && closedM5Candle.time === lastTradedCandleTime) {
+            console.log(`   ⏭️  [Duplicate] ข้ามการสแกน PA เพราะแท่ง M5 เดิม (เวลา ${lastTradedCandleTime}) เคยประมวลผลและส่งสัญญาณไปแล้ว`);
+        } else {
+            for (let zone of allZones) {
+                // [Premium/Discount Filter] - ปิดชั่วคราวเพื่อให้บอท Follow Trend ได้ดีขึ้น
             /*
             if (tradingRange) {
                 if (zone.type === 'BUY_ZONE' && zone.top > tradingRange.midpoint) {
@@ -201,6 +206,7 @@ async function checkMarketLogic() {
                 foundValidSignal = true;
                 
                 signalDirection = paResult.direction;
+                lastTradedCandleTime = closedM5Candle.time; // บันทึกเวลาแท่งเทียนที่ส่งสัญญาณไปแล้ว เพื่อป้องกันการส่งซ้ำ
 
                 // 🌟 โหมด ENTRY_MODE === 'CANDLE_CLOSE' (เข้าทันทีที่ปิดแท่ง PA M5 ยืนยันสัญญาณ)
                 if (ENGINE_CONFIG.ENTRY_MODE === 'CANDLE_CLOSE') {
@@ -365,9 +371,12 @@ async function checkMarketLogic() {
                 await sendSignal(previewMsg);
                 break;
             }
-        }
+        } // End of for loop
+        } // End of if (!duplicate) check
 
-        if (!foundPA) {
+        if (lastTradedCandleTime && closedM5Candle.time === lastTradedCandleTime) {
+            // ไม่ต้อง log อะไรเพิ่มถ้าเป็น duplicate
+        } else if (!foundPA) {
             console.log(`   😴 ไม่พบ PA ในโซนไหนเลย → รอรอบหน้า (2 นาที)`);
         } else if (!foundValidSignal) {
             console.log(`   ⏳ พบ PA แต่ยังไม่มีโซนผ่าน ChoCh → รอรอบหน้า (2 นาที)`);
