@@ -186,16 +186,17 @@ async function checkMarketLogic() {
                 foundPA = true;
                 console.log(`   ✨ พบ PA ในโซน [${zone.name}] (${zone.bottom.toFixed(2)} - ${zone.top.toFixed(2)}) | Direction: ${paResult.direction}`);
 
+                // [IDM หรือ ChoCh] ต้องผ่านอย่างใดอย่างหนึ่ง
                 const hasIDM = checkIDMSweep(closedM5Array, paResult.direction);
-                if (!hasIDM) {
-                    console.log(`   ⏭️  [IDM Filter] พบ PA แต่ยังไม่มีการกวาด IDM (Liquidity Sweep) ก่อนหน้า → รอต่อไป`);
-                    continue;
-                }
-
                 const hasChoCh = checkChoCh(closedM5Array, paResult.direction);
-                if (!hasChoCh) {
-                    console.log(`   ⏭️  [Bug#4 Fix] พบ PA และกวาด IDM แล้ว แต่ยังไม่เกิด ChoCh ใน M5 → ข้ามโซนนี้ไปก่อน`);
-                    continue; // ข้ามโซนนี้ รอโซนถัดไป
+
+                if (hasIDM) {
+                    console.log(`   ✅ [IDM] พบการกวาด Liquidity Sweep ก่อนหน้า → ผ่าน (ข้าม ChoCh)`);
+                } else if (hasChoCh) {
+                    console.log(`   ✅ [ChoCh] ไม่มี IDM แต่โครงสร้าง M5 เสียทรงแล้ว (Body-based BOS) → ผ่าน`);
+                } else {
+                    console.log(`   ⏭️  [IDM+ChoCh] พบ PA แต่ไม่ผ่านทั้ง IDM และ ChoCh → ข้ามโซนนี้`);
+                    continue;
                 }
                 foundValidSignal = true;
                 
