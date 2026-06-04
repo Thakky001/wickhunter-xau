@@ -358,7 +358,7 @@ async function checkMarketLogic() {
                 const previewMsg = `⏳ <b>เตรียมตัว! พบการกลับตัวในโซน ${zone.name} H1</b>\n\n` +
                     `ดักรอการ <b>เบรกปลายไส้ (M5)</b> ฝั่ง ${signalDirection}\n\n` +
                     `📍 <b>Entry:</b> ${referenceWickPrice.toFixed(2)}\n` +
-                    `🛑 <b>SL (${ENGINE_CONFIG.SL_MODE === 'PA_WICK' ? 'PA Wick' : 'Zone Edge'}):</b> ${cancelPrice.toFixed(2)}\n` +
+                    `🛑 <b>SL (${ENGINE_CONFIG.SL_MODE === 'PA_WICK' ? 'PA Wick' : ENGINE_CONFIG.SL_MODE === 'SWING_HIGH_LOW' ? 'Swing H/L' : 'Zone Edge'}):</b> ${cancelPrice.toFixed(2)}\n` +
                     `🎯 <b>TP1 (1:2):</b> ${tp1.toFixed(2)}\n` +
                     `🎯 <b>TP2 (1:3):</b> ${tp2.toFixed(2)}`; // [Bug#2 Fix] แสดง TP2 ด้วย
 
@@ -562,7 +562,7 @@ async function processTickData(currentPrice, source = 'tick') {
             return;
         }
 
-        if (isTp1Hit) {
+        if (isTp1Hit && !isTp2Hit) {
             activeTrade.isTp1Hit = true;
             activeTrade.sl = activeTrade.entry; // ขยับ SL มาบังทุน (Breakeven)
 
