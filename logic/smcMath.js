@@ -168,40 +168,40 @@ function checkChoCh(m5Candles, direction) {
     const paCandle = m5Candles[m5Candles.length - 1];
 
     if (direction === 'BUY') {
-        // หา Swing High (Fractal High) ล่าสุด ย้อนหลังแบบละเอียด
+        // หา Swing High (Fractal High) ล่าสุด → ใช้ Close ของแท่ง Fractal (Body-based BOS)
         let targetHigh = null;
         for (let i = m5Candles.length - 3; i >= 2; i--) {
             const c = m5Candles[i];
             if (c.high > m5Candles[i - 1].high && c.high > m5Candles[i - 2].high &&
                 c.high > m5Candles[i + 1].high && c.high > m5Candles[i + 2].high) {
-                targetHigh = c.high;
+                targetHigh = Math.max(c.open, c.close); // ใช้ Close/Open (ขอบบนของ Body) แทน High (ปลายไส้)
                 break;
             }
         }
-        // Fallback: หากไม่พบ Fractal High ในข้อมูลเลย ให้ใช้จุดสูงสุดย้อนหลัง 10 แท่ง
+        // Fallback: หากไม่พบ Fractal High → ใช้ค่า Close สูงสุดย้อนหลัง 10 แท่ง
         if (targetHigh === null) {
             const prevCandles = m5Candles.slice(-Math.min(11, m5Candles.length), -1);
-            targetHigh = Math.max(...prevCandles.map(c => c.high));
+            targetHigh = Math.max(...prevCandles.map(c => Math.max(c.open, c.close)));
         }
         
         return paCandle.close > targetHigh;
     }
 
     if (direction === 'SELL') {
-        // หา Swing Low (Fractal Low) ล่าสุด ย้อนหลังแบบละเอียด
+        // หา Swing Low (Fractal Low) ล่าสุด → ใช้ Close ของแท่ง Fractal (Body-based BOS)
         let targetLow = null;
         for (let i = m5Candles.length - 3; i >= 2; i--) {
             const c = m5Candles[i];
             if (c.low < m5Candles[i - 1].low && c.low < m5Candles[i - 2].low &&
                 c.low < m5Candles[i + 1].low && c.low < m5Candles[i + 2].low) {
-                targetLow = c.low;
+                targetLow = Math.min(c.open, c.close); // ใช้ Close/Open (ขอบล่างของ Body) แทน Low (ปลายไส้)
                 break;
             }
         }
-        // Fallback: หากไม่พบ Fractal Low ในข้อมูลเลย ให้ใช้จุดต่ำสุดย้อนหลัง 10 แท่ง
+        // Fallback: หากไม่พบ Fractal Low → ใช้ค่า Close ต่ำสุดย้อนหลัง 10 แท่ง
         if (targetLow === null) {
             const prevCandles = m5Candles.slice(-Math.min(11, m5Candles.length), -1);
-            targetLow = Math.min(...prevCandles.map(c => c.low));
+            targetLow = Math.min(...prevCandles.map(c => Math.min(c.open, c.close)));
         }
 
         return paCandle.close < targetLow;
