@@ -26,10 +26,10 @@ function findFVG(candles) {
         }
         // Bearish FVG (Gap ขาลง / โซน Sell)
         else if (c3.high < c1.low) {
-            // [Strict Mitigation] โซนถูกใช้ไปแล้วถ้าราคากลับขึ้นมาแตะ (high >= bottom)
+            // [Strict Mitigation] โซนถูกใช้ไปแล้วถ้าราคากลับขึ้นมาแตะ top (c1.low)
             let isMitigated = false;
             for (let j = i + 1; j < candles.length; j++) {
-                if (candles[j].high >= c3.high) {
+                if (candles[j].high >= c1.low) {
                     isMitigated = true;
                     break;
                 }
@@ -62,10 +62,10 @@ function findOrderBlock(candles) {
 
         // Bullish OB (โซน Buy): แท่งแดงสุดท้าย ก่อนแท่งเขียวพุ่งทะลุ High เดิม
         if (isPrevBearish && isCurrBullish && curr.close > prev.high) {
-            // [Strict Mitigation] โซนถูกใช้ไปแล้วถ้าราคากลับลงมาแตะ (low <= top)
+            // [Strict Mitigation] โซนถูกใช้ไปแล้วถ้าราคาทะลุลงต่ำกว่า bottom (prev.low)
             let isMitigated = false;
             for (let j = i + 1; j < candles.length; j++) {
-                if (candles[j].low <= prev.high) {
+                if (candles[j].low <= prev.low) {
                     isMitigated = true;
                     break;
                 }
@@ -82,10 +82,10 @@ function findOrderBlock(candles) {
         }
         // Bearish OB (โซน Sell): แท่งเขียวสุดท้าย ก่อนแท่งแดงเทขายรุนแรง
         else if (isPrevBullish && isCurrBearish && curr.close < prev.low) {
-            // [Strict Mitigation] โซนถูกใช้ไปแล้วถ้าราคากลับขึ้นมาแตะ (high >= bottom)
+            // [Strict Mitigation] โซนถูกใช้ไปแล้วถ้าราคากลับขึ้นมาทะลุ top (prev.high)
             let isMitigated = false;
             for (let j = i + 1; j < candles.length; j++) {
-                if (candles[j].high >= prev.low) {
+                if (candles[j].high >= prev.high) {
                     isMitigated = true;
                     break;
                 }
@@ -261,4 +261,67 @@ function getTradingRange(h1Candles, lookback = 24) {
     };
 }
 
-module.exports = { findFVG, findOrderBlock, checkPriceActionInZone, checkChoCh, getHTFTrend, getTradingRange };
+// ─── IDM (Inducement / Liquidity Sweep) ────────────────────────────────────────
+function checkIDMSweep(m5Candles, direction) {
+    if (m5Candles.length < 15) return false;
+
+    const currentIndex = m5Candles.length - 1;
+
+    if (direction === 'BUY') {
+        let currentSwingLow = m5Candles[currentIndex].low;
+        let currentSwingIndex = currentIndex;
+        
+        for (let i = currentIndex; i >= Math.max(0, currentIndex - 3); i--) {
+            if (m5Candles[i].low <= currentSwingLow) {
+                currentSwingLow = m5Candles[i].low;
+                currentSwingIndex = i;
+            }
+        }
+
+        let idmLow = null;
+        for (let i = currentSwingIndex - 2; i >= Math.max(2, currentSwingIndex - 30); i--) {
+            const c = m5Candles[i];
+            if (c.low < m5Candles[i - 1].low && c.low < m5Candles[i - 2].low &&
+                c.low < m5Candles[i + 1].low && c.low < m5Candles[i + 2].low) {
+                idmLow = c.low;
+                break;
+            }
+        }
+
+        if (idmLow !== null && currentSwingLow < idmLow) {
+            return true;
+        }
+        return false;
+    }
+
+    if (direction === 'SELL') {
+        let currentSwingHigh = m5Candles[currentIndex].high;
+        let currentSwingIndex = currentIndex;
+        
+        for (let i = currentIndex; i >= Math.max(0, currentIndex - 3); i--) {
+            if (m5Candles[i].high >= currentSwingHigh) {
+                currentSwingHigh = m5Candles[i].high;
+                currentSwingIndex = i;
+            }
+        }
+
+        let idmHigh = null;
+        for (let i = currentSwingIndex - 2; i >= Math.max(2, currentSwingIndex - 30); i--) {
+            const c = m5Candles[i];
+            if (c.high > m5Candles[i - 1].high && c.high > m5Candles[i - 2].high &&
+                c.high > m5Candles[i + 1].high && c.high > m5Candles[i + 2].high) {
+                idmHigh = c.high;
+                break;
+            }
+        }
+
+        if (idmHigh !== null && currentSwingHigh > idmHigh) {
+            return true;
+        }
+        return false;
+    }
+
+    return false;
+}
+
+module.exports = { findFVG, findOrderBlock, checkPriceActionInZone, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep };

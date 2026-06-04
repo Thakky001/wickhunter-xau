@@ -1,5 +1,5 @@
 const { sendSignal } = require('../services/telegram');
-const { findFVG, findOrderBlock, checkPriceActionInZone, checkChoCh, getHTFTrend, getTradingRange } = require('./smcMath');
+const { findFVG, findOrderBlock, checkPriceActionInZone, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep } = require('./smcMath');
 const { getCandles } = require('../services/twelveData');
 const dashboardState = require('../services/dashboardState');
 const sheets = require('../services/sheets');
@@ -85,7 +85,7 @@ async function checkMarketLogic() {
     }
 
     if (currentState === STATES.SCANNING) {
-        const currentHour = new Date().getHours();
+        const currentHour = new Date().getUTCHours();
         if (cachedH1Candles.length === 0 || currentHour !== lastH1FetchHour) {
             cachedH1Candles = await getCandles('60', 100); // ดึง 100 แท่ง H1 = ~4 วัน (รองรับ MAX_ZONE_AGE_HOURS: 72)
             lastH1FetchHour = currentHour;
@@ -125,6 +125,12 @@ async function checkMarketLogic() {
         }
         console.log(`   📈 [HTF Trend H4]: ${htfTrend} → รับสัญญาณ: ${htfTrend === 'BULLISH' ? 'BUY เท่านั้น' : htfTrend === 'BEARISH' ? 'SELL เท่านั้น' : 'ทั้ง BUY และ SELL (Neutral)'}`);
         console.log(`   🕯️  M5 แท่งปิดล่าสุด | O:${closedM5Candle.open.toFixed(2)} H:${closedM5Candle.high.toFixed(2)} L:${closedM5Candle.low.toFixed(2)} C:${closedM5Candle.close.toFixed(2)}`);
+        if (allZones.length > 0) {
+            allZones.forEach((z, idx) => {
+                const dir = z.type === 'BUY_ZONE' ? '🟢 BUY' : '🔴 SELL';
+                console.log(`   📌 [${idx + 1}] ${z.name} (${dir}) | ${z.bottom.toFixed(2)} - ${z.top.toFixed(2)}`);
+            });
+        }
         // ───────────────────────────────────────────────────────────────
 
         // อัปเดต Dashboard State และ Google Sheets หลังสแกนเสร็จ
@@ -150,7 +156,8 @@ async function checkMarketLogic() {
         let foundPA = false;
         let foundValidSignal = false;
         for (let zone of allZones) {
-            // [Premium/Discount Filter]
+            // [Premium/Discount Filter] - ปิดชั่วคราวเพื่อให้บอท Follow Trend ได้ดีขึ้น
+            /*
             if (tradingRange) {
                 if (zone.type === 'BUY_ZONE' && zone.top > tradingRange.midpoint) {
                     console.log(`   🚫 [Premium/Discount] ข้าม BUY zone [${zone.name}] (${zone.top.toFixed(2)}) เพราะอยู่สูงกว่า Midpoint H1 (${tradingRange.midpoint.toFixed(2)}) (โซน Premium แพงเกินไป)`);
@@ -161,6 +168,7 @@ async function checkMarketLogic() {
                     continue;
                 }
             }
+            */
 
             // [HTF Filter] ข้ามโซนที่สวนทางกับ HTF Trend
             if (htfTrend === 'BEARISH' && zone.type === 'BUY_ZONE') {
@@ -178,9 +186,15 @@ async function checkMarketLogic() {
                 foundPA = true;
                 console.log(`   ✨ พบ PA ในโซน [${zone.name}] (${zone.bottom.toFixed(2)} - ${zone.top.toFixed(2)}) | Direction: ${paResult.direction}`);
 
+                const hasIDM = checkIDMSweep(closedM5Array, paResult.direction);
+                if (!hasIDM) {
+                    console.log(`   ⏭️  [IDM Filter] พบ PA แต่ยังไม่มีการกวาด IDM (Liquidity Sweep) ก่อนหน้า → รอต่อไป`);
+                    continue;
+                }
+
                 const hasChoCh = checkChoCh(closedM5Array, paResult.direction);
                 if (!hasChoCh) {
-                    console.log(`   ⏭️  [Bug#4 Fix] พบ PA แต่ยังไม่เกิด ChoCh ใน M5 → ข้ามโซนนี้ไปก่อน`);
+                    console.log(`   ⏭️  [Bug#4 Fix] พบ PA และกวาด IDM แล้ว แต่ยังไม่เกิด ChoCh ใน M5 → ข้ามโซนนี้ไปก่อน`);
                     continue; // ข้ามโซนนี้ รอโซนถัดไป
                 }
                 foundValidSignal = true;
