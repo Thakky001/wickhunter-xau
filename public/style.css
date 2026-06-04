@@ -1,0 +1,532 @@
+:root {
+            --bg: #0d1117;
+            --bg-card: #161b22;
+            --bg-card-hover: #1c2330;
+            --border: #30363d;
+            --gold: #f0b429;
+            --gold-dim: #a07820;
+            --text: #e6edf3;
+            --text-muted: #8b949e;
+            --green: #3fb950;
+            --red: #f85149;
+            --blue: #58a6ff;
+            --yellow: #e3b341;
+            --radius: 12px;
+            --shadow: 0 4px 24px rgba(0,0,0,0.4);
+        }
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 0;
+        }
+
+        /* ── HEADER ── */
+        header {
+            background: linear-gradient(135deg, #161b22 0%, #0d1117 60%);
+            border-bottom: 1px solid var(--border);
+            padding: 18px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            backdrop-filter: blur(10px);
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--gold), #c87d00);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            box-shadow: 0 0 20px rgba(240,180,41,0.3);
+        }
+
+        .header-title h1 {
+            font-size: 18px;
+            font-weight: 700;
+            background: linear-gradient(90deg, var(--gold), #fff8e7);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -0.3px;
+        }
+
+        .header-title p {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 1px;
+        }
+
+        #sse-status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .control-button {
+            border: 1px solid rgba(240,180,41,0.45);
+            background: rgba(240,180,41,0.12);
+            color: var(--gold);
+            border-radius: 8px;
+            padding: 8px 12px;
+            font: inherit;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background 0.2s, border-color 0.2s, opacity 0.2s;
+            white-space: nowrap;
+        }
+
+        .control-button:hover {
+            background: rgba(240,180,41,0.2);
+            border-color: rgba(240,180,41,0.7);
+        }
+
+        .control-button:disabled {
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        #force-scan-status {
+            font-size: 11px;
+            color: var(--text-muted);
+            min-width: 72px;
+        }
+
+        #sse-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--red);
+            transition: background 0.3s;
+        }
+
+        #sse-dot.live { background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse-dot 2s infinite; }
+
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* ── MAIN ── */
+        main {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 24px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        /* ── SECTION TITLE ── */
+        .section-title {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+        }
+
+        /* ── STATUS CARDS GRID ── */
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 14px;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 18px 20px;
+            transition: transform 0.2s, box-shadow 0.2s, background 0.2s;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow);
+            background: var(--bg-card-hover);
+        }
+
+        .card-label {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            margin-bottom: 10px;
+        }
+
+        .card-value {
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--text);
+            line-height: 1;
+        }
+
+        .card-sub {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 6px;
+        }
+
+        /* ── ACTIVE TRADE CARD ── */
+        .active-trade-card {
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+            margin-bottom: 14px;
+            position: relative;
+            overflow: hidden;
+            animation: fadeIn 0.4s ease-out;
+        }
+
+        .active-trade-card.buy-mode {
+            border-color: rgba(63, 185, 80, 0.4);
+            background: linear-gradient(180deg, rgba(63, 185, 80, 0.04) 0%, var(--bg-card) 100%);
+            box-shadow: 0 4px 20px rgba(63, 185, 80, 0.05);
+        }
+
+        .active-trade-card.sell-mode {
+            border-color: rgba(248, 81, 73, 0.4);
+            background: linear-gradient(180deg, rgba(248, 81, 73, 0.04) 0%, var(--bg-card) 100%);
+            box-shadow: 0 4px 20px rgba(248, 81, 73, 0.05);
+        }
+
+        .active-trade-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 10px;
+        }
+
+        .active-badge {
+            font-size: 13px;
+            font-weight: 800;
+            padding: 4px 12px;
+            border-radius: 6px;
+            letter-spacing: 0.5px;
+        }
+        
+        .active-badge.buy {
+            background: var(--green);
+            color: #000;
+        }
+        
+        .active-badge.sell {
+            background: var(--red);
+            color: #fff;
+        }
+
+        .active-time {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .at-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 12px;
+        }
+
+        .at-item {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            padding: 10px 14px;
+            border: 1px solid rgba(255, 255, 255, 0.03);
+        }
+
+        .at-label {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+
+        .at-val {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text);
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* ── BADGES ── */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+        }
+
+        .badge::before {
+            content: '';
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+
+        .badge-blue { background: rgba(88,166,255,0.15); color: var(--blue); border: 1px solid rgba(88,166,255,0.3); }
+        .badge-yellow { background: rgba(227,179,65,0.15); color: var(--yellow); border: 1px solid rgba(227,179,65,0.3); }
+        .badge-green { background: rgba(63,185,80,0.15); color: var(--green); border: 1px solid rgba(63,185,80,0.3); }
+        .badge-red { background: rgba(248,81,73,0.15); color: var(--red); border: 1px solid rgba(248,81,73,0.3); }
+        .badge-gray { background: rgba(139,148,158,0.15); color: var(--text-muted); border: 1px solid rgba(139,148,158,0.3); }
+        .bottom-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+        }
+
+        @media (max-width: 700px) {
+            .bottom-grid { grid-template-columns: 1fr; }
+        }
+
+        /* ── M5 CANDLE CARD ── */
+        .ohlc-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 12px;
+        }
+
+        .ohlc-item {
+            background: rgba(255,255,255,0.03);
+            border-radius: 8px;
+            padding: 10px 12px;
+        }
+
+        .ohlc-label {
+            font-size: 10px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+        }
+
+        .ohlc-value {
+            font-size: 16px;
+            font-weight: 600;
+            margin-top: 4px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .ohlc-value.bullish { color: var(--green); }
+        .ohlc-value.bearish { color: var(--red); }
+        .ohlc-value.neutral { color: var(--text); }
+
+        /* ── SIGNAL CARD ── */
+        .signal-detail-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .signal-item {
+            background: rgba(255,255,255,0.03);
+            border-radius: 8px;
+            padding: 10px 12px;
+        }
+
+        .signal-label {
+            font-size: 10px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+        }
+
+        .signal-value {
+            font-size: 15px;
+            font-weight: 600;
+            margin-top: 4px;
+            color: var(--text);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .no-signal {
+            color: var(--text-muted);
+            font-size: 13px;
+            text-align: center;
+            padding: 20px 0;
+        }
+
+        /* ── SIGNAL HISTORY ── */
+        .history-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 4px;
+        }
+
+        .history-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 8px;
+            border-left: 3px solid transparent;
+            transition: background 0.2s;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateX(-10px); }
+            to   { opacity: 1; transform: translateX(0); }
+        }
+
+        .history-item.pre-alert  { border-left-color: var(--yellow); }
+        .history-item.triggered  { border-left-color: var(--green); }
+        .history-item.invalidated { border-left-color: var(--red); }
+
+        .history-badge {
+            flex-shrink: 0;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .history-badge.pre-alert  { background: rgba(227,179,65,0.15); color: var(--yellow); }
+        .history-badge.triggered  { background: rgba(63,185,80,0.15); color: var(--green); }
+        .history-badge.invalidated { background: rgba(248,81,73,0.15); color: var(--red); }
+
+        .history-meta {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .history-dir {
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .history-time {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 1px;
+        }
+
+        .history-entry {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
+
+        .no-history {
+            color: var(--text-muted);
+            font-size: 13px;
+            text-align: center;
+            padding: 20px 0;
+        }
+
+        /* ── RECONNECT BANNER ── */
+        #reconnect-banner {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            background: rgba(248,81,73,0.1);
+            border: 1px solid rgba(248,81,73,0.3);
+            border-radius: var(--radius);
+            padding: 12px 20px;
+            font-size: 13px;
+            color: var(--red);
+        }
+
+        #reconnect-banner.visible { display: flex; }
+
+        /* ── ZONES CARD ── */
+        .zones-mini {
+            display: flex;
+            gap: 12px;
+            margin-top: 8px;
+        }
+
+        .zone-chip {
+            flex: 1;
+            background: rgba(255,255,255,0.04);
+            border-radius: 8px;
+            padding: 8px 10px;
+            text-align: center;
+        }
+
+        .zone-chip .zc-num {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--gold);
+        }
+
+        .zone-chip .zc-label {
+            font-size: 10px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-top: 2px;
+        }
+
+        /* ── GOLD LINE SEPARATOR ── */
+        .gold-line {
+            width: 100%;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--gold-dim), transparent);
+            opacity: 0.4;
+        }
+
+        /* ── FOOTER ── */
+        footer {
+            text-align: center;
+            padding: 20px;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        footer span { color: var(--gold); }
+
+        /* Responsive tweaks */
+        @media (max-width: 480px) {
+            .status-grid { grid-template-columns: 1fr 1fr; }
+            .card-value { font-size: 18px; }
+            header { padding: 14px 16px; }
+            main { padding: 16px 12px; }
+            .header-actions { gap: 8px; }
+            #force-scan-status { display: none; }
+            .control-button { padding: 7px 10px; }
+        }
