@@ -42,6 +42,7 @@ let lastTickAt = Date.now();
 let lastFallbackCheckAt = 0;
 let isCheckingWaitingGuard = false;
 let lastTradedCandleTime = null; // เก็บบันทึกเวลาของแท่ง M5 ที่เคยส่งสัญญาณไปแล้ว
+let isProcessingTick = false; // ล็อกป้องกัน tick หลายตัวประมวลผลพร้อมกัน (ป้องกันแจ้งเตือนซ้ำ)
 
 function clearActiveSignal() {
     referenceWickPrice = 0;
@@ -80,309 +81,309 @@ async function checkMarketLogic() {
     isCheckingMarket = true;
 
     try {
-    if (!isMarketOpen()) {
-        console.log("💤 ตลาดทองคำปิดทำการ บอทเข้าสู่โหมดพักผ่อน...");
-        return;
-    }
-
-    if (currentState === STATES.SCANNING) {
-        const currentHour = new Date().getUTCHours();
-        if (cachedH1Candles.length === 0 || currentHour !== lastH1FetchHour) {
-            cachedH1Candles = await getCandles('60', 100); // ดึง 100 แท่ง H1 = ~4 วัน (รองรับ MAX_ZONE_AGE_HOURS: 72)
-            lastH1FetchHour = currentHour;
-            if (cachedH1Candles.length > 0) {
-                console.log(`🔄 [SMC Engine]: อัปเดตข้อมูลแท่งเทียน H1 ใหม่ (ชั่วโมงที่ ${currentHour})`);
-            }
-        }
-
-        const m5Candles = await getCandles('5', 50);
-
-        if (cachedH1Candles.length === 0 || m5Candles.length < 2) {
-            console.log(`⚠️  [DEBUG]: ดึงข้อมูลแท่งเทียนไม่สำเร็จหรือได้มาไม่ครบ → ข้ามรอบนี้`);
+        if (!isMarketOpen()) {
+            console.log("💤 ตลาดทองคำปิดทำการ บอทเข้าสู่โหมดพักผ่อน...");
             return;
         }
 
-        const closedH1Candles = cachedH1Candles.slice(0, -1);
+        if (currentState === STATES.SCANNING) {
+            const currentHour = new Date().getUTCHours();
+            if (cachedH1Candles.length === 0 || currentHour !== lastH1FetchHour) {
+                cachedH1Candles = await getCandles('60', 100); // ดึง 100 แท่ง H1 = ~4 วัน (รองรับ MAX_ZONE_AGE_HOURS: 72)
+                lastH1FetchHour = currentHour;
+                if (cachedH1Candles.length > 0) {
+                    console.log(`🔄 [SMC Engine]: อัปเดตข้อมูลแท่งเทียน H1 ใหม่ (ชั่วโมงที่ ${currentHour})`);
+                }
+            }
 
-        // กรองหาเฉพาะโซนที่สดใหม่ย้อนหลังไม่เกินอายุที่กำหนด (เช่น MAX_ZONE_AGE_HOURS = 24)
-        const candlesToScan = closedH1Candles.slice(-ENGINE_CONFIG.MAX_ZONE_AGE_HOURS);
-        const fvgs = findFVG(candlesToScan, m5Candles);
-        const obs = findOrderBlock(candlesToScan, m5Candles);
-        const allZones = [...fvgs, ...obs];
+            const m5Candles = await getCandles('5', 50);
 
-        // [HTF Filter] คำนวณทิศทาง H4 จาก H1 ที่มีอยู่แล้ว ไม่ใช้ API เพิ่ม
-        const htfTrend = getHTFTrend(closedH1Candles);
-        const tradingRange = getTradingRange(closedH1Candles);
+            if (cachedH1Candles.length === 0 || m5Candles.length < 2) {
+                console.log(`⚠️  [DEBUG]: ดึงข้อมูลแท่งเทียนไม่สำเร็จหรือได้มาไม่ครบ → ข้ามรอบนี้`);
+                return;
+            }
 
-        const closedM5Candle = m5Candles[m5Candles.length - 2];
-        const closedM5Array = m5Candles.slice(0, -1);
-        // ─── DEBUG: สรุปผลการสแกนรอบนี้ ───────────────────────────────
-        const now = new Date().toLocaleTimeString('th-TH');
-        console.log(`\n─────────────────────────────────────────`);
-        console.log(`🔍 [SCAN] ${now} | State: ${currentState}`);
-        console.log(`   📊 H1 Zones พบทั้งหมด: ${allZones.length} โซน (FVG: ${fvgs.length}, OB: ${obs.length})`);
-        if (tradingRange) {
-            console.log(`   📐 [Midpoint] Median Close 24H: ${tradingRange.midpoint.toFixed(2)} | Range: ${tradingRange.low.toFixed(2)} - ${tradingRange.high.toFixed(2)}`);
-        }
-        console.log(`   📈 [HTF Trend H4]: ${htfTrend} → รับสัญญาณ: ${htfTrend === 'BULLISH' ? 'BUY เท่านั้น' : htfTrend === 'BEARISH' ? 'SELL เท่านั้น' : 'ทั้ง BUY และ SELL (Neutral)'}`);
-        console.log(`   🕯️  M5 แท่งปิดล่าสุด | O:${closedM5Candle.open.toFixed(2)} H:${closedM5Candle.high.toFixed(2)} L:${closedM5Candle.low.toFixed(2)} C:${closedM5Candle.close.toFixed(2)}`);
-        if (allZones.length > 0) {
-            allZones.forEach((z, idx) => {
-                const dir = z.type === 'BUY_ZONE' ? '🟢 BUY' : '🔴 SELL';
-                console.log(`   📌 [${idx + 1}] ${z.name} (${dir}) | ${z.bottom.toFixed(2)} - ${z.top.toFixed(2)}`);
-            });
-        }
-        // ───────────────────────────────────────────────────────────────
+            const closedH1Candles = cachedH1Candles.slice(0, -1);
 
-        // อัปเดต Dashboard State และ Google Sheets หลังสแกนเสร็จ
-        dashboardState.update({
-            botState: currentState,
-            zonesFound: { fvg: fvgs.length, ob: obs.length, total: allZones.length },
-            lastM5: {
-                open: closedM5Candle.open,
-                high: closedM5Candle.high,
-                low: closedM5Candle.low,
-                close: closedM5Candle.close
-            },
-            tradingRange: tradingRange,
-            activeTrade: activeTrade
-        });
-        sheets.updateBotStatus({
-            state: currentState,
-            zonesFound: allZones.length,
-            lastM5Close: closedM5Candle.close,
-            wsStatus: 'CONNECTED'
-        });
+            // กรองหาเฉพาะโซนที่สดใหม่ย้อนหลังไม่เกินอายุที่กำหนด (เช่น MAX_ZONE_AGE_HOURS = 24)
+            const candlesToScan = closedH1Candles.slice(-ENGINE_CONFIG.MAX_ZONE_AGE_HOURS);
+            const fvgs = findFVG(candlesToScan, m5Candles);
+            const obs = findOrderBlock(candlesToScan, m5Candles);
+            const allZones = [...fvgs, ...obs];
 
-        let foundPA = false;
-        let foundValidSignal = false;
+            // [HTF Filter] คำนวณทิศทาง H4 จาก H1 ที่มีอยู่แล้ว ไม่ใช้ API เพิ่ม
+            const htfTrend = getHTFTrend(closedH1Candles);
+            const tradingRange = getTradingRange(closedH1Candles);
 
-        if (lastTradedCandleTime && closedM5Candle.time === lastTradedCandleTime) {
-            console.log(`   ⏭️  [Duplicate] ข้ามการสแกน PA เพราะแท่ง M5 เดิม (เวลา ${lastTradedCandleTime}) เคยประมวลผลและส่งสัญญาณไปแล้ว`);
-        } else {
-            for (let zone of allZones) {
-                // [Premium/Discount Filter] - ปิดชั่วคราวเพื่อให้บอท Follow Trend ได้ดีขึ้น
-            /*
+            const closedM5Candle = m5Candles[m5Candles.length - 2];
+            const closedM5Array = m5Candles.slice(0, -1);
+            // ─── DEBUG: สรุปผลการสแกนรอบนี้ ───────────────────────────────
+            const now = new Date().toLocaleTimeString('th-TH');
+            console.log(`\n─────────────────────────────────────────`);
+            console.log(`🔍 [SCAN] ${now} | State: ${currentState}`);
+            console.log(`   📊 H1 Zones พบทั้งหมด: ${allZones.length} โซน (FVG: ${fvgs.length}, OB: ${obs.length})`);
             if (tradingRange) {
-                if (zone.type === 'BUY_ZONE' && zone.top > tradingRange.midpoint) {
-                    console.log(`   🚫 [Premium/Discount] ข้าม BUY zone [${zone.name}] (${zone.top.toFixed(2)}) เพราะอยู่สูงกว่า Midpoint H1 (${tradingRange.midpoint.toFixed(2)}) (โซน Premium แพงเกินไป)`);
-                    continue;
-                }
-                if (zone.type === 'SELL_ZONE' && zone.bottom < tradingRange.midpoint) {
-                    console.log(`   🚫 [Premium/Discount] ข้าม SELL zone [${zone.name}] (${zone.bottom.toFixed(2)}) เพราะอยู่ต่ำกว่า Midpoint H1 (${tradingRange.midpoint.toFixed(2)}) (โซน Discount ถูกเกินไป)`);
-                    continue;
-                }
+                console.log(`   📐 [Midpoint] Median Close 24H: ${tradingRange.midpoint.toFixed(2)} | Range: ${tradingRange.low.toFixed(2)} - ${tradingRange.high.toFixed(2)}`);
             }
-            */
-
-            // [HTF Filter] ข้ามโซนที่สวนทางกับ HTF Trend
-            if (htfTrend === 'BEARISH' && zone.type === 'BUY_ZONE') {
-                console.log(`   🚫 [HTF] ข้าม ${zone.name} เพราะ H4 Bearish → ห้าม BUY`);
-                continue;
+            console.log(`   📈 [HTF Trend H4]: ${htfTrend} → รับสัญญาณ: ${htfTrend === 'BULLISH' ? 'BUY เท่านั้น' : htfTrend === 'BEARISH' ? 'SELL เท่านั้น' : 'ทั้ง BUY และ SELL (Neutral)'}`);
+            console.log(`   🕯️  M5 แท่งปิดล่าสุด | O:${closedM5Candle.open.toFixed(2)} H:${closedM5Candle.high.toFixed(2)} L:${closedM5Candle.low.toFixed(2)} C:${closedM5Candle.close.toFixed(2)}`);
+            if (allZones.length > 0) {
+                allZones.forEach((z, idx) => {
+                    const dir = z.type === 'BUY_ZONE' ? '🟢 BUY' : '🔴 SELL';
+                    console.log(`   📌 [${idx + 1}] ${z.name} (${dir}) | ${z.bottom.toFixed(2)} - ${z.top.toFixed(2)}`);
+                });
             }
-            if (htfTrend === 'BULLISH' && zone.type === 'SELL_ZONE') {
-                console.log(`   🚫 [HTF] ข้าม ${zone.name} เพราะ H4 Bullish → ห้าม SELL`);
-                continue;
-            }
+            // ───────────────────────────────────────────────────────────────
 
-            const paResult = checkPriceActionInZone(closedM5Candle, zone);
+            // อัปเดต Dashboard State และ Google Sheets หลังสแกนเสร็จ
+            dashboardState.update({
+                botState: currentState,
+                zonesFound: { fvg: fvgs.length, ob: obs.length, total: allZones.length },
+                lastM5: {
+                    open: closedM5Candle.open,
+                    high: closedM5Candle.high,
+                    low: closedM5Candle.low,
+                    close: closedM5Candle.close
+                },
+                tradingRange: tradingRange,
+                activeTrade: activeTrade
+            });
+            sheets.updateBotStatus({
+                state: currentState,
+                zonesFound: allZones.length,
+                lastM5Close: closedM5Candle.close,
+                wsStatus: 'CONNECTED'
+            });
 
-            if (paResult.isValid) {
-                foundPA = true;
-                console.log(`   ✨ พบ PA ในโซน [${zone.name}] (${zone.bottom.toFixed(2)} - ${zone.top.toFixed(2)}) | Direction: ${paResult.direction}`);
+            let foundPA = false;
+            let foundValidSignal = false;
 
-                // [IDM หรือ ChoCh] ต้องผ่านอย่างใดอย่างหนึ่ง
-                const hasIDM = checkIDMSweep(closedM5Array, paResult.direction);
-                const hasChoCh = checkChoCh(closedM5Array, paResult.direction);
-
-                if (hasIDM) {
-                    console.log(`   ✅ [IDM] พบการกวาด Liquidity Sweep ก่อนหน้า → ผ่าน (ข้าม ChoCh)`);
-                } else if (hasChoCh) {
-                    console.log(`   ✅ [ChoCh] ไม่มี IDM แต่โครงสร้าง M5 เสียทรงแล้ว (Body-based BOS) → ผ่าน`);
-                } else {
-                    console.log(`   ⏭️  [IDM+ChoCh] พบ PA แต่ไม่ผ่านทั้ง IDM และ ChoCh → ข้ามโซนนี้`);
-                    continue;
-                }
-                foundValidSignal = true;
-                
-                signalDirection = paResult.direction;
-                lastTradedCandleTime = closedM5Candle.time; // บันทึกเวลาแท่งเทียนที่ส่งสัญญาณไปแล้ว เพื่อป้องกันการส่งซ้ำ
-
-                // 🌟 โหมด ENTRY_MODE === 'CANDLE_CLOSE' (เข้าทันทีที่ปิดแท่ง PA M5 ยืนยันสัญญาณ)
-                if (ENGINE_CONFIG.ENTRY_MODE === 'CANDLE_CLOSE') {
-                    referenceWickPrice = closedM5Candle.close; // ใช้ราคาปิดเป็นจุดเข้า
-
-                    if (ENGINE_CONFIG.SL_MODE === 'SWING_HIGH_LOW') {
-                        const recentCandles = m5Candles.slice(-ENGINE_CONFIG.SWING_LOOKBACK_CANDLES - 1, -1);
-                        if (signalDirection === 'BUY') {
-                            const swingLow = Math.min(...recentCandles.map(c => c.low));
-                            cancelPrice = swingLow - ENGINE_CONFIG.SL_BUFFER;
-                        } else {
-                            const swingHigh = Math.max(...recentCandles.map(c => c.high));
-                            cancelPrice = swingHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
+            if (lastTradedCandleTime && closedM5Candle.time === lastTradedCandleTime) {
+                console.log(`   ⏭️  [Duplicate] ข้ามการสแกน PA เพราะแท่ง M5 เดิม (เวลา ${lastTradedCandleTime}) เคยประมวลผลและส่งสัญญาณไปแล้ว`);
+            } else {
+                for (let zone of allZones) {
+                    // [Premium/Discount Filter] - ปิดชั่วคราวเพื่อให้บอท Follow Trend ได้ดีขึ้น
+                    /*
+                    if (tradingRange) {
+                        if (zone.type === 'BUY_ZONE' && zone.top > tradingRange.midpoint) {
+                            console.log(`   🚫 [Premium/Discount] ข้าม BUY zone [${zone.name}] (${zone.top.toFixed(2)}) เพราะอยู่สูงกว่า Midpoint H1 (${tradingRange.midpoint.toFixed(2)}) (โซน Premium แพงเกินไป)`);
+                            continue;
                         }
-                    } else {
-                        // [Bug#3 Fix] CANDLE_CLOSE mode ต้องใช้ PA_WICK เสมอ
-                        // เพราะ entry คือ candle.close (กลางแท่ง) ถ้าใช้ Zone Edge SL จะกว้างเกิน R:R บิดเบือน
-                        cancelPrice = signalDirection === 'BUY' 
-                            ? paResult.paCandleLow - ENGINE_CONFIG.SL_BUFFER 
-                            : paResult.paCandleHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
+                        if (zone.type === 'SELL_ZONE' && zone.bottom < tradingRange.midpoint) {
+                            console.log(`   🚫 [Premium/Discount] ข้าม SELL zone [${zone.name}] (${zone.bottom.toFixed(2)}) เพราะอยู่ต่ำกว่า Midpoint H1 (${tradingRange.midpoint.toFixed(2)}) (โซน Discount ถูกเกินไป)`);
+                            continue;
+                        }
+                    }
+                    */
+
+                    // [HTF Filter] ข้ามโซนที่สวนทางกับ HTF Trend
+                    if (htfTrend === 'BEARISH' && zone.type === 'BUY_ZONE') {
+                        console.log(`   🚫 [HTF] ข้าม ${zone.name} เพราะ H4 Bearish → ห้าม BUY`);
+                        continue;
+                    }
+                    if (htfTrend === 'BULLISH' && zone.type === 'SELL_ZONE') {
+                        console.log(`   🚫 [HTF] ข้าม ${zone.name} เพราะ H4 Bullish → ห้าม SELL`);
+                        continue;
                     }
 
-                    let risk = Math.abs(referenceWickPrice - cancelPrice);
-                    if (risk > ENGINE_CONFIG.MAX_SL_POINTS) {
-                        risk = ENGINE_CONFIG.MAX_SL_POINTS;
-                        cancelPrice = signalDirection === 'BUY' ? referenceWickPrice - risk : referenceWickPrice + risk;
+                    const paResult = checkPriceActionInZone(closedM5Candle, zone);
+
+                    if (paResult.isValid) {
+                        foundPA = true;
+                        console.log(`   ✨ พบ PA ในโซน [${zone.name}] (${zone.bottom.toFixed(2)} - ${zone.top.toFixed(2)}) | Direction: ${paResult.direction}`);
+
+                        // [IDM + ChoCh] ต้องผ่านทั้งคู่ (AND) ตามหลัก SMC: กวาด Liquidity ก่อน → โครงสร้างเสียทรงยืนยัน
+                        const hasIDM = checkIDMSweep(closedM5Array, paResult.direction);
+                        const hasChoCh = checkChoCh(closedM5Array, paResult.direction);
+
+                        console.log(`   🔎 [IDM]: ${hasIDM ? '✅ พบ Liquidity Sweep' : '❌ ไม่พบ'} | [ChoCh]: ${hasChoCh ? '✅ โครงสร้างเสียทรง' : '❌ ยังไม่เสียทรง'}`);
+
+                        if (hasIDM && hasChoCh) {
+                            console.log(`   ✅ [IDM+ChoCh] ผ่านทั้งคู่! กวาด Liquidity แล้ว + โครงสร้างยืนยันกลับตัว → เข้าเทรดได้`);
+                        } else {
+                            console.log(`   ⏭️  [IDM+ChoCh] พบ PA แต่ยังไม่ผ่านครบทั้ง 2 เงื่อนไข → ข้ามโซนนี้`);
+                            continue;
+                        }
+                        foundValidSignal = true;
+
+                        signalDirection = paResult.direction;
+                        lastTradedCandleTime = closedM5Candle.time; // บันทึกเวลาแท่งเทียนที่ส่งสัญญาณไปแล้ว เพื่อป้องกันการส่งซ้ำ
+
+                        // 🌟 โหมด ENTRY_MODE === 'CANDLE_CLOSE' (เข้าทันทีที่ปิดแท่ง PA M5 ยืนยันสัญญาณ)
+                        if (ENGINE_CONFIG.ENTRY_MODE === 'CANDLE_CLOSE') {
+                            referenceWickPrice = closedM5Candle.close; // ใช้ราคาปิดเป็นจุดเข้า
+
+                            if (ENGINE_CONFIG.SL_MODE === 'SWING_HIGH_LOW') {
+                                const recentCandles = m5Candles.slice(-ENGINE_CONFIG.SWING_LOOKBACK_CANDLES - 1, -1);
+                                if (signalDirection === 'BUY') {
+                                    const swingLow = Math.min(...recentCandles.map(c => c.low));
+                                    cancelPrice = swingLow - ENGINE_CONFIG.SL_BUFFER;
+                                } else {
+                                    const swingHigh = Math.max(...recentCandles.map(c => c.high));
+                                    cancelPrice = swingHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
+                                }
+                            } else {
+                                // [Bug#3 Fix] CANDLE_CLOSE mode ต้องใช้ PA_WICK เสมอ
+                                // เพราะ entry คือ candle.close (กลางแท่ง) ถ้าใช้ Zone Edge SL จะกว้างเกิน R:R บิดเบือน
+                                cancelPrice = signalDirection === 'BUY'
+                                    ? paResult.paCandleLow - ENGINE_CONFIG.SL_BUFFER
+                                    : paResult.paCandleHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
+                            }
+
+                            let risk = Math.abs(referenceWickPrice - cancelPrice);
+                            if (risk > ENGINE_CONFIG.MAX_SL_POINTS) {
+                                risk = ENGINE_CONFIG.MAX_SL_POINTS;
+                                cancelPrice = signalDirection === 'BUY' ? referenceWickPrice - risk : referenceWickPrice + risk;
+                            }
+
+                            const minRisk = ENGINE_CONFIG.MIN_TP_POINTS / 2;
+                            if (risk < minRisk) {
+                                risk = minRisk;
+                                // [Bug#1 Fix] อัปเดต cancelPrice ให้สอดคล้องกับ risk ใหม่ → R:R ถูกต้องแน่นอน
+                                cancelPrice = signalDirection === 'BUY' ? referenceWickPrice - risk : referenceWickPrice + risk;
+                            }
+
+                            const tp1Price = signalDirection === 'BUY' ? referenceWickPrice + (risk * 2) : referenceWickPrice - (risk * 2);
+                            const tp2Price = signalDirection === 'BUY' ? referenceWickPrice + (risk * 3) : referenceWickPrice - (risk * 3);
+
+                            currentState = STATES.TRIGGERED;
+                            waitingStartedAt = null; // [Bug#3 Fix] ล้างค่าให้สะอาดเสมอหลัง TRIGGERED
+                            dashboardState.update({ botState: currentState });
+
+                            // TRIGGERED: ส่งสัญญาณอัปเดตและบันทึก
+                            dashboardState.addSignal({
+                                type: 'TRIGGERED',
+                                direction: signalDirection,
+                                entry: referenceWickPrice,
+                                sl: cancelPrice,
+                                tp1: tp1Price,
+                                tp2: tp2Price,
+                                currentPrice: referenceWickPrice,
+                                time: new Date().toISOString()
+                            });
+                            sheets.appendSignal({
+                                type: 'TRIGGERED',
+                                direction: signalDirection,
+                                entry: referenceWickPrice,
+                                sl: cancelPrice,
+                                tp1: tp1Price,
+                                tp2: tp2Price,
+                                currentPrice: referenceWickPrice
+                            });
+
+                            const msg = `🔥 <b>WickHunter XAU | SIGNAL TRIGGERED (CANDLE CLOSE)</b> 🔥\n\n` +
+                                `✅ <b>Direction:</b> ${signalDirection}\n` +
+                                `✅ <b>Action:</b> สัญญาณกลับตัวยืนยันที่ราคาปิดแท่ง!\n\n` +
+                                `📍 <b>Entry Price:</b> ${referenceWickPrice.toFixed(2)}\n` +
+                                `🛑 <b>Stop Loss:</b> ${cancelPrice.toFixed(2)}\n` +
+                                `🎯 <b>TP 1 (RR 1:2):</b> ${tp1Price.toFixed(2)}\n` +
+                                `🎯 <b>TP 2 (RR 1:3):</b> ${tp2Price.toFixed(2)}\n\n` +
+                                `🚀 <b>Current Price:</b> ${referenceWickPrice.toFixed(2)}`;
+
+                            await sendSignal(msg);
+                            activeTrade = {
+                                direction: signalDirection,
+                                entry: referenceWickPrice,
+                                sl: cancelPrice,
+                                tp1: tp1Price,
+                                tp2: tp2Price,
+                                isTp1Hit: false,
+                                time: new Date().toISOString()
+                            };
+                            currentState = STATES.MONITORING_TRADE;
+                            console.log(`🟢 [SMC Engine]: สัญญาณถูกส่งแล้ว! เปลี่ยนสถานะบอทเป็น MONITORING_TRADE`);
+                            dashboardState.update({ botState: currentState, activeTrade });
+
+                            break; // ออกจาก loop
+                        }
+
+                        // 🌟 โหมด ENTRY_MODE === 'WICK_BREAKOUT' (แบบเดิม - รอราคาเบรกปลายไส้)
+                        referenceWickPrice = paResult.triggerWickPrice;
+
+                        if (ENGINE_CONFIG.SL_MODE === 'SWING_HIGH_LOW') {
+                            const recentCandles = m5Candles.slice(-ENGINE_CONFIG.SWING_LOOKBACK_CANDLES - 1, -1);
+                            if (signalDirection === 'BUY') {
+                                const swingLow = Math.min(...recentCandles.map(c => c.low));
+                                cancelPrice = swingLow - ENGINE_CONFIG.SL_BUFFER;
+                            } else {
+                                const swingHigh = Math.max(...recentCandles.map(c => c.high));
+                                cancelPrice = swingHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
+                            }
+                        } else if (ENGINE_CONFIG.SL_MODE === 'PA_WICK') {
+                            cancelPrice = signalDirection === 'BUY'
+                                ? paResult.paCandleLow - ENGINE_CONFIG.SL_BUFFER
+                                : paResult.paCandleHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
+                        } else {
+                            cancelPrice = signalDirection === 'BUY'
+                                ? paResult.cancelPrice
+                                : paResult.cancelPrice + ENGINE_CONFIG.SPREAD_BUFFER;
+                        }
+
+                        let risk = Math.abs(referenceWickPrice - cancelPrice);
+                        if (risk > ENGINE_CONFIG.MAX_SL_POINTS) {
+                            risk = ENGINE_CONFIG.MAX_SL_POINTS;
+                            cancelPrice = signalDirection === 'BUY' ? referenceWickPrice - risk : referenceWickPrice + risk;
+                        }
+
+                        const minRisk = ENGINE_CONFIG.MIN_TP_POINTS / 2;
+                        let tpRisk = risk;
+                        if (tpRisk < minRisk) {
+                            tpRisk = minRisk;
+                            // [Bug#1 Fix] อัปเดต cancelPrice ให้สอดคล้องกับ tpRisk → R:R แม่นยำ
+                            cancelPrice = signalDirection === 'BUY' ? referenceWickPrice - tpRisk : referenceWickPrice + tpRisk;
+                        }
+
+                        const tp1 = signalDirection === 'BUY' ? referenceWickPrice + (tpRisk * 2) : referenceWickPrice - (tpRisk * 2);
+                        const tp2 = signalDirection === 'BUY' ? referenceWickPrice + (tpRisk * 3) : referenceWickPrice - (tpRisk * 3);
+
+                        waitingStartedAt = Date.now();
+                        lastTickAt = Date.now();
+                        lastFallbackCheckAt = 0;
+                        currentState = STATES.WAITING_WICK_BREAK;
+                        dashboardState.update({ botState: currentState });
+                        dashboardState.addSignal({
+                            type: 'PRE_ALERT',
+                            zone: zone.name,
+                            direction: signalDirection,
+                            entry: referenceWickPrice,
+                            sl: cancelPrice,
+                            tp1: tp1,
+                            tp2: tp2,
+                            time: new Date().toISOString()
+                        });
+                        sheets.appendSignal({
+                            type: 'PRE_ALERT',
+                            zone: zone.name,
+                            direction: signalDirection,
+                            entry: referenceWickPrice,
+                            sl: cancelPrice,
+                            tp1: tp1,
+                            tp2: tp2, // [Bug#2 Fix] เพิ่ม TP2 ใน PRE_ALERT
+                            currentPrice: closedM5Candle.close
+                        });
+
+                        const previewMsg = `⏳ <b>เตรียมตัว! พบการกลับตัวในโซน ${zone.name} H1</b>\n\n` +
+                            `ดักรอการ <b>เบรกปลายไส้ (M5)</b> ฝั่ง ${signalDirection}\n\n` +
+                            `📍 <b>Entry:</b> ${referenceWickPrice.toFixed(2)}\n` +
+                            `🛑 <b>SL (${ENGINE_CONFIG.SL_MODE === 'PA_WICK' ? 'PA Wick' : ENGINE_CONFIG.SL_MODE === 'SWING_HIGH_LOW' ? 'Swing H/L' : 'Zone Edge'}):</b> ${cancelPrice.toFixed(2)}\n` +
+                            `🎯 <b>TP1 (1:2):</b> ${tp1.toFixed(2)}\n` +
+                            `🎯 <b>TP2 (1:3):</b> ${tp2.toFixed(2)}`; // [Bug#2 Fix] แสดง TP2 ด้วย
+
+                        await sendSignal(previewMsg);
+                        break;
                     }
+                } // End of for loop
+            } // End of if (!duplicate) check
 
-                    const minRisk = ENGINE_CONFIG.MIN_TP_POINTS / 2;
-                    if (risk < minRisk) {
-                        risk = minRisk;
-                        // [Bug#1 Fix] อัปเดต cancelPrice ให้สอดคล้องกับ risk ใหม่ → R:R ถูกต้องแน่นอน
-                        cancelPrice = signalDirection === 'BUY' ? referenceWickPrice - risk : referenceWickPrice + risk;
-                    }
-
-                    const tp1Price = signalDirection === 'BUY' ? referenceWickPrice + (risk * 2) : referenceWickPrice - (risk * 2);
-                    const tp2Price = signalDirection === 'BUY' ? referenceWickPrice + (risk * 3) : referenceWickPrice - (risk * 3);
-
-                    currentState = STATES.TRIGGERED;
-                    waitingStartedAt = null; // [Bug#3 Fix] ล้างค่าให้สะอาดเสมอหลัง TRIGGERED
-                    dashboardState.update({ botState: currentState });
-
-                    // TRIGGERED: ส่งสัญญาณอัปเดตและบันทึก
-                    dashboardState.addSignal({
-                        type: 'TRIGGERED',
-                        direction: signalDirection,
-                        entry: referenceWickPrice,
-                        sl: cancelPrice,
-                        tp1: tp1Price,
-                        tp2: tp2Price,
-                        currentPrice: referenceWickPrice,
-                        time: new Date().toISOString()
-                    });
-                    sheets.appendSignal({
-                        type: 'TRIGGERED',
-                        direction: signalDirection,
-                        entry: referenceWickPrice,
-                        sl: cancelPrice,
-                        tp1: tp1Price,
-                        tp2: tp2Price,
-                        currentPrice: referenceWickPrice
-                    });
-
-                    const msg = `🔥 <b>WickHunter XAU | SIGNAL TRIGGERED (CANDLE CLOSE)</b> 🔥\n\n` +
-                        `✅ <b>Direction:</b> ${signalDirection}\n` +
-                        `✅ <b>Action:</b> สัญญาณกลับตัวยืนยันที่ราคาปิดแท่ง!\n\n` +
-                        `📍 <b>Entry Price:</b> ${referenceWickPrice.toFixed(2)}\n` +
-                        `🛑 <b>Stop Loss:</b> ${cancelPrice.toFixed(2)}\n` +
-                        `🎯 <b>TP 1 (RR 1:2):</b> ${tp1Price.toFixed(2)}\n` +
-                        `🎯 <b>TP 2 (RR 1:3):</b> ${tp2Price.toFixed(2)}\n\n` +
-                        `🚀 <b>Current Price:</b> ${referenceWickPrice.toFixed(2)}`;
-
-                    await sendSignal(msg);
-                    activeTrade = {
-                        direction: signalDirection,
-                        entry: referenceWickPrice,
-                        sl: cancelPrice,
-                        tp1: tp1Price,
-                        tp2: tp2Price,
-                        isTp1Hit: false,
-                        time: new Date().toISOString()
-                    };
-                    currentState = STATES.MONITORING_TRADE;
-                    console.log(`🟢 [SMC Engine]: สัญญาณถูกส่งแล้ว! เปลี่ยนสถานะบอทเป็น MONITORING_TRADE`);
-                    dashboardState.update({ botState: currentState, activeTrade });
-
-                    break; // ออกจาก loop
-                }
-
-                // 🌟 โหมด ENTRY_MODE === 'WICK_BREAKOUT' (แบบเดิม - รอราคาเบรกปลายไส้)
-                referenceWickPrice = paResult.triggerWickPrice;
-                
-                if (ENGINE_CONFIG.SL_MODE === 'SWING_HIGH_LOW') {
-                    const recentCandles = m5Candles.slice(-ENGINE_CONFIG.SWING_LOOKBACK_CANDLES - 1, -1);
-                    if (signalDirection === 'BUY') {
-                        const swingLow = Math.min(...recentCandles.map(c => c.low));
-                        cancelPrice = swingLow - ENGINE_CONFIG.SL_BUFFER;
-                    } else {
-                        const swingHigh = Math.max(...recentCandles.map(c => c.high));
-                        cancelPrice = swingHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
-                    }
-                } else if (ENGINE_CONFIG.SL_MODE === 'PA_WICK') {
-                    cancelPrice = signalDirection === 'BUY' 
-                        ? paResult.paCandleLow - ENGINE_CONFIG.SL_BUFFER 
-                        : paResult.paCandleHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
-                } else {
-                    cancelPrice = signalDirection === 'BUY'
-                        ? paResult.cancelPrice
-                        : paResult.cancelPrice + ENGINE_CONFIG.SPREAD_BUFFER;
-                }
-
-                let risk = Math.abs(referenceWickPrice - cancelPrice);
-                if (risk > ENGINE_CONFIG.MAX_SL_POINTS) {
-                    risk = ENGINE_CONFIG.MAX_SL_POINTS;
-                    cancelPrice = signalDirection === 'BUY' ? referenceWickPrice - risk : referenceWickPrice + risk;
-                }
-                
-                const minRisk = ENGINE_CONFIG.MIN_TP_POINTS / 2;
-                let tpRisk = risk;
-                if (tpRisk < minRisk) {
-                    tpRisk = minRisk;
-                    // [Bug#1 Fix] อัปเดต cancelPrice ให้สอดคล้องกับ tpRisk → R:R แม่นยำ
-                    cancelPrice = signalDirection === 'BUY' ? referenceWickPrice - tpRisk : referenceWickPrice + tpRisk;
-                }
-
-                const tp1 = signalDirection === 'BUY' ? referenceWickPrice + (tpRisk * 2) : referenceWickPrice - (tpRisk * 2);
-                const tp2 = signalDirection === 'BUY' ? referenceWickPrice + (tpRisk * 3) : referenceWickPrice - (tpRisk * 3);
-
-                waitingStartedAt = Date.now();
-                lastTickAt = Date.now();
-                lastFallbackCheckAt = 0;
-                currentState = STATES.WAITING_WICK_BREAK;
-                dashboardState.update({ botState: currentState });
-                dashboardState.addSignal({
-                    type: 'PRE_ALERT',
-                    zone: zone.name,
-                    direction: signalDirection,
-                    entry: referenceWickPrice,
-                    sl: cancelPrice,
-                    tp1: tp1,
-                    tp2: tp2,
-                    time: new Date().toISOString()
-                });
-                sheets.appendSignal({
-                    type: 'PRE_ALERT',
-                    zone: zone.name,
-                    direction: signalDirection,
-                    entry: referenceWickPrice,
-                    sl: cancelPrice,
-                    tp1: tp1,
-                    tp2: tp2, // [Bug#2 Fix] เพิ่ม TP2 ใน PRE_ALERT
-                    currentPrice: closedM5Candle.close
-                });
-
-                const previewMsg = `⏳ <b>เตรียมตัว! พบการกลับตัวในโซน ${zone.name} H1</b>\n\n` +
-                    `ดักรอการ <b>เบรกปลายไส้ (M5)</b> ฝั่ง ${signalDirection}\n\n` +
-                    `📍 <b>Entry:</b> ${referenceWickPrice.toFixed(2)}\n` +
-                    `🛑 <b>SL (${ENGINE_CONFIG.SL_MODE === 'PA_WICK' ? 'PA Wick' : ENGINE_CONFIG.SL_MODE === 'SWING_HIGH_LOW' ? 'Swing H/L' : 'Zone Edge'}):</b> ${cancelPrice.toFixed(2)}\n` +
-                    `🎯 <b>TP1 (1:2):</b> ${tp1.toFixed(2)}\n` +
-                    `🎯 <b>TP2 (1:3):</b> ${tp2.toFixed(2)}`; // [Bug#2 Fix] แสดง TP2 ด้วย
-
-                await sendSignal(previewMsg);
-                break;
+            if (lastTradedCandleTime && closedM5Candle.time === lastTradedCandleTime) {
+                // ไม่ต้อง log อะไรเพิ่มถ้าเป็น duplicate
+            } else if (!foundPA) {
+                console.log(`   😴 ไม่พบ PA ในโซนไหนเลย → รอรอบหน้า (2 นาที)`);
+            } else if (!foundValidSignal) {
+                console.log(`   ⏳ พบ PA แต่ยังไม่มีโซนผ่าน ChoCh → รอรอบหน้า (2 นาที)`);
             }
-        } // End of for loop
-        } // End of if (!duplicate) check
-
-        if (lastTradedCandleTime && closedM5Candle.time === lastTradedCandleTime) {
-            // ไม่ต้อง log อะไรเพิ่มถ้าเป็น duplicate
-        } else if (!foundPA) {
-            console.log(`   😴 ไม่พบ PA ในโซนไหนเลย → รอรอบหน้า (2 นาที)`);
-        } else if (!foundValidSignal) {
-            console.log(`   ⏳ พบ PA แต่ยังไม่มีโซนผ่าน ChoCh → รอรอบหน้า (2 นาที)`);
+            console.log(`─────────────────────────────────────────`);
         }
-        console.log(`─────────────────────────────────────────`);
-    }
     } catch (error) {
         console.error("❌ [SMC Engine Error] checkMarketLogic failed:", error);
     } finally {
@@ -515,239 +516,263 @@ async function processTickData(currentPrice, source = 'tick') {
         lastTickAt = Date.now();
     }
 
-    if (currentState === STATES.MONITORING_TRADE && activeTrade) {
-        const direction = activeTrade.direction;
-        let isSlHit = false;
-        let isTp1Hit = false;
-        let isTp2Hit = false;
+    // ล็อกป้องกัน tick หลายตัวเข้ามาประมวลผลพร้อมกัน (แก้บั๊กส่ง SL HIT ซ้ำ 3-4 ครั้ง)
+    if (isProcessingTick) return;
+    isProcessingTick = true;
 
-        if (direction === 'BUY') {
-            if (price <= activeTrade.sl) isSlHit = true;
-            if (!activeTrade.isTp1Hit && price >= activeTrade.tp1) isTp1Hit = true;
-            if (price >= activeTrade.tp2) isTp2Hit = true;
-        } else if (direction === 'SELL') {
-            if (price >= activeTrade.sl) isSlHit = true;
-            if (!activeTrade.isTp1Hit && price <= activeTrade.tp1) isTp1Hit = true;
-            if (price <= activeTrade.tp2) isTp2Hit = true;
-        }
+    try {
 
-        const sourceNote = source === 'fallback'
-            ? '\n\n⚠️ ตรวจพบจาก TwelveData fallback'
-            : '';
+        if (currentState === STATES.MONITORING_TRADE && activeTrade) {
+            const direction = activeTrade.direction;
+            let isSlHit = false;
+            let isTp1Hit = false;
+            let isTp2Hit = false;
 
-        if (isSlHit) {
-            const invalidDir = direction;
-            const invalidEntry = activeTrade.entry;
-            const invalidSL = activeTrade.sl;
-
-            const logMsg = `❌ <b>[SL HIT] ออเดอร์ ${invalidDir} ชน Stop Loss</b>\n\n` +
-                `📍 Entry: ${invalidEntry.toFixed(2)}\n` +
-                `🛑 SL: ${invalidSL.toFixed(2)}\n` +
-                `🎯 TP1: ${activeTrade.tp1.toFixed(2)}\n` +
-                `🎯 TP2: ${activeTrade.tp2.toFixed(2)}\n\n` +
-                `📉 ชนที่ราคา: ${price.toFixed(2)} (ขาดทุน)${sourceNote}`;
-            
-            await sendSignal(logMsg);
-            
-            dashboardState.addSignal({
-                type: 'SL_HIT',
-                direction: invalidDir,
-                entry: invalidEntry,
-                sl: invalidSL,
-                currentPrice: price,
-                time: new Date().toISOString()
-            });
-            sheets.appendSignal({
-                type: 'SL_HIT',
-                direction: invalidDir,
-                entry: invalidEntry,
-                sl: invalidSL,
-                currentPrice: price
-            });
-
-            currentState = STATES.SCANNING;
-            clearActiveSignal();
-            dashboardState.update({ botState: currentState });
-            return;
-        }
-
-        if (isTp1Hit && !isTp2Hit) {
-            activeTrade.isTp1Hit = true;
-            activeTrade.sl = activeTrade.entry; // ขยับ SL มาบังทุน (Breakeven)
-
-            const logMsg = `🎯 <b>[TP1 HIT] ออเดอร์ ${direction} ชน Take Profit 1 (RR 1:2)</b>\n\n` +
-                `📍 Entry: ${activeTrade.entry.toFixed(2)}\n` +
-                `🎯 TP1: ${activeTrade.tp1.toFixed(2)}\n` +
-                `🛡️ ระบบปรับ SL มาบังทุน (Breakeven) ที่: ${activeTrade.entry.toFixed(2)} เรียบร้อย\n\n` +
-                `📈 ชนที่ราคา: ${price.toFixed(2)} (เก็บกำไรครึ่งแรก)${sourceNote}`;
-            
-            await sendSignal(logMsg);
-
-            dashboardState.addSignal({
-                type: 'TP1_HIT',
-                direction,
-                entry: activeTrade.entry,
-                sl: activeTrade.sl,
-                currentPrice: price,
-                time: new Date().toISOString()
-            });
-            sheets.appendSignal({
-                type: 'TP1_HIT',
-                direction,
-                entry: activeTrade.entry,
-                sl: activeTrade.sl,
-                currentPrice: price
-            });
-            dashboardState.update({ activeTrade });
-        }
-
-        if (isTp2Hit) {
-            const logMsg = `🔥 <b>[TP2 HIT] ออเดอร์ ${direction} ชน Take Profit 2 (RR 1:3)</b>\n\n` +
-                `📍 Entry: ${activeTrade.entry.toFixed(2)}\n` +
-                `🎯 TP2: ${activeTrade.tp2.toFixed(2)}\n\n` +
-                `📈 ชนที่ราคา: ${price.toFixed(2)} (ปิดออเดอร์ทำกำไรสูงสุด)${sourceNote}`;
-            
-            await sendSignal(logMsg);
-
-            dashboardState.addSignal({
-                type: 'TP2_HIT',
-                direction,
-                entry: activeTrade.entry,
-                sl: activeTrade.sl,
-                currentPrice: price,
-                time: new Date().toISOString()
-            });
-            sheets.appendSignal({
-                type: 'TP2_HIT',
-                direction,
-                entry: activeTrade.entry,
-                sl: activeTrade.sl,
-                currentPrice: price
-            });
-
-            currentState = STATES.SCANNING;
-            clearActiveSignal();
-            dashboardState.update({ botState: currentState });
-            return;
-        }
-    }
-
-    if (currentState === STATES.WAITING_WICK_BREAK) {
-        const sourceLabel = source === 'fallback' ? 'FALLBACK' : 'TICK';
-        const sourceNote = source === 'fallback'
-            ? '\n\n⚠️ ตรวจพบจาก TwelveData fallback เพราะ Finnhub tick ขาดช่วง'
-            : '';
-        console.log(`📡 [${sourceLabel}] ราคาปัจจุบัน: ${price.toFixed(2)} (รอเบรก: ${referenceWickPrice.toFixed(2)})`);
-        let isBreakout = false;
-        let isInvalidated = false;
-
-        if (signalDirection === 'BUY') {
-            if (price >= referenceWickPrice) isBreakout = true;
-            if (price <= cancelPrice) isInvalidated = true; // ถ้าราคาร่วงหลุดขอบโซนล่าง
-        } else if (signalDirection === 'SELL') {
-            if (price <= referenceWickPrice) isBreakout = true;
-            if (price >= cancelPrice) isInvalidated = true; // ถ้าราคาพุ่งทะลุขอบโซนบน
-        }
-
-        if (isInvalidated) {
-            // [Bug#1 Fix] เรียก clearActiveSignal() เพื่อล้างค่าตัวแปรทุกตัวให้สะอาดก่อนกลับ SCANNING
-            const invalidDir = signalDirection;
-            const invalidEntry = referenceWickPrice;
-            const invalidSL = cancelPrice;
-
-            currentState = STATES.SCANNING;
-            clearActiveSignal();
-            console.log(`❌ [SMC Engine]: กราฟผิดทาง! ราคาทะลุขอบโซน (${invalidSL.toFixed(2)}) ระบบกลับไป SCANNING`);
-            dashboardState.update({ botState: currentState });
-
-            // INVALIDATED: อัปเดต Dashboard State และ Sheets
-            dashboardState.addSignal({
-                type: 'INVALIDATED',
-                direction: invalidDir,
-                entry: invalidEntry,
-                sl: invalidSL,
-                currentPrice: price,
-                time: new Date().toISOString()
-            });
-            sheets.appendSignal({
-                type: 'INVALIDATED',
-                direction: invalidDir,
-                entry: invalidEntry,
-                sl: invalidSL,
-                currentPrice: price
-            });
-
-            await sendSignal(`❌ <b>ยกเลิกสัญญาณ ${invalidDir}</b>\n\nกราฟผิดทาง ทะลุจุด SL ที่ <b>${invalidSL.toFixed(2)}</b> ก่อนการเบรก ระบบกลับสู่โหมดสแกนหาโซนใหม่...${sourceNote}`);
-            return;
-        }
-
-
-        if (isBreakout) {
-            currentState = STATES.TRIGGERED;
-            waitingStartedAt = null;
-            dashboardState.update({ botState: currentState });
-            const slPrice = cancelPrice;
-            let risk = Math.abs(referenceWickPrice - slPrice);
-            const minRisk = ENGINE_CONFIG.MIN_TP_POINTS / 2;
-            if (risk < minRisk) {
-                risk = minRisk;
+            if (direction === 'BUY') {
+                if (price <= activeTrade.sl) isSlHit = true;
+                if (!activeTrade.isTp1Hit && price >= activeTrade.tp1) isTp1Hit = true;
+                if (price >= activeTrade.tp2) isTp2Hit = true;
+            } else if (direction === 'SELL') {
+                if (price >= activeTrade.sl) isSlHit = true;
+                if (!activeTrade.isTp1Hit && price <= activeTrade.tp1) isTp1Hit = true;
+                if (price <= activeTrade.tp2) isTp2Hit = true;
             }
-            
-            let tp1Price = 0;
-            let tp2Price = 0;
+
+            const sourceNote = source === 'fallback'
+                ? '\n\n⚠️ ตรวจพบจาก TwelveData fallback'
+                : '';
+
+            if (isSlHit) {
+                const invalidDir = direction;
+                const invalidEntry = activeTrade.entry;
+                const invalidSL = activeTrade.sl;
+                const tp1Val = activeTrade.tp1;
+                const tp2Val = activeTrade.tp2;
+
+                // เปลี่ยนสถานะทันทีก่อน await เพื่อป้องกัน tick ถัดไปเข้ามาซ้ำ
+                currentState = STATES.SCANNING;
+                clearActiveSignal();
+                dashboardState.update({ botState: currentState });
+
+                const logMsg = `❌ <b>[SL HIT] ออเดอร์ ${invalidDir} ชน Stop Loss</b>\n\n` +
+                    `📍 Entry: ${invalidEntry.toFixed(2)}\n` +
+                    `🛑 SL: ${invalidSL.toFixed(2)}\n` +
+                    `🎯 TP1: ${tp1Val.toFixed(2)}\n` +
+                    `🎯 TP2: ${tp2Val.toFixed(2)}\n\n` +
+                    `📉 ชนที่ราคา: ${price.toFixed(2)} (ขาดทุน)${sourceNote}`;
+
+                await sendSignal(logMsg);
+
+                dashboardState.addSignal({
+                    type: 'SL_HIT',
+                    direction: invalidDir,
+                    entry: invalidEntry,
+                    sl: invalidSL,
+                    currentPrice: price,
+                    time: new Date().toISOString()
+                });
+                sheets.appendSignal({
+                    type: 'SL_HIT',
+                    direction: invalidDir,
+                    entry: invalidEntry,
+                    sl: invalidSL,
+                    currentPrice: price
+                });
+                return;
+            }
+
+            if (isTp1Hit) {
+                const tp1Entry = activeTrade.entry;
+                const tp1Val = activeTrade.tp1;
+                const tp1Sl = activeTrade.sl;
+
+                // เปลี่ยนสถานะทันทีก่อน await เพื่อป้องกัน tick ถัดไปเข้ามาซ้ำ
+                currentState = STATES.SCANNING;
+                clearActiveSignal();
+                dashboardState.update({ botState: currentState });
+
+                const logMsg = `🎯 <b>[TP1 HIT] ออเดอร์ ${direction} ชน Take Profit 1 (RR 1:2)</b>\n\n` +
+                    `📍 Entry: ${tp1Entry.toFixed(2)}\n` +
+                    `🎯 TP1: ${tp1Val.toFixed(2)}\n\n` +
+                    `📈 ชนที่ราคา: ${price.toFixed(2)} (เก็บกำไร RR 1:2 ✅)\n` +
+                    `🔄 ระบบกลับไปสแกนหาโอกาสใหม่แล้ว...${sourceNote}`;
+
+                await sendSignal(logMsg);
+
+                dashboardState.addSignal({
+                    type: 'TP1_HIT',
+                    direction,
+                    entry: tp1Entry,
+                    sl: tp1Sl,
+                    currentPrice: price,
+                    time: new Date().toISOString()
+                });
+                sheets.appendSignal({
+                    type: 'TP1_HIT',
+                    direction,
+                    entry: tp1Entry,
+                    sl: tp1Sl,
+                    currentPrice: price
+                });
+                return;
+            }
+
+            if (isTp2Hit) {
+                const tp2Entry = activeTrade.entry;
+                const tp2Val = activeTrade.tp2;
+                const tp2Sl = activeTrade.sl;
+
+                // เปลี่ยนสถานะทันทีก่อน await เพื่อป้องกัน tick ถัดไปเข้ามาซ้ำ
+                currentState = STATES.SCANNING;
+                clearActiveSignal();
+                dashboardState.update({ botState: currentState });
+
+                const logMsg = `🔥 <b>[TP2 HIT] ออเดอร์ ${direction} ชน Take Profit 2 (RR 1:3)</b>\n\n` +
+                    `📍 Entry: ${tp2Entry.toFixed(2)}\n` +
+                    `🎯 TP2: ${tp2Val.toFixed(2)}\n\n` +
+                    `📈 ชนที่ราคา: ${price.toFixed(2)} (ปิดออเดอร์ทำกำไรสูงสุด)${sourceNote}`;
+
+                await sendSignal(logMsg);
+
+                dashboardState.addSignal({
+                    type: 'TP2_HIT',
+                    direction,
+                    entry: tp2Entry,
+                    sl: tp2Sl,
+                    currentPrice: price,
+                    time: new Date().toISOString()
+                });
+                sheets.appendSignal({
+                    type: 'TP2_HIT',
+                    direction,
+                    entry: tp2Entry,
+                    sl: tp2Sl,
+                    currentPrice: price
+                });
+                return;
+            }
+        }
+
+        if (currentState === STATES.WAITING_WICK_BREAK) {
+            const sourceLabel = source === 'fallback' ? 'FALLBACK' : 'TICK';
+            const sourceNote = source === 'fallback'
+                ? '\n\n⚠️ ตรวจพบจาก TwelveData fallback เพราะ Finnhub tick ขาดช่วง'
+                : '';
+            console.log(`📡 [${sourceLabel}] ราคาปัจจุบัน: ${price.toFixed(2)} (รอเบรก: ${referenceWickPrice.toFixed(2)})`);
+            let isBreakout = false;
+            let isInvalidated = false;
 
             if (signalDirection === 'BUY') {
-                tp1Price = referenceWickPrice + (risk * 2);
-                tp2Price = referenceWickPrice + (risk * 3);
+                if (price >= referenceWickPrice) isBreakout = true;
+                if (price <= cancelPrice) isInvalidated = true; // ถ้าราคาร่วงหลุดขอบโซนล่าง
             } else if (signalDirection === 'SELL') {
-                tp1Price = referenceWickPrice - (risk * 2);
-                tp2Price = referenceWickPrice - (risk * 3);
+                if (price <= referenceWickPrice) isBreakout = true;
+                if (price >= cancelPrice) isInvalidated = true; // ถ้าราคาพุ่งทะลุขอบโซนบน
             }
 
-            // TRIGGERED: อัปเดต Dashboard State
-            dashboardState.addSignal({
-                type: 'TRIGGERED',
-                direction: signalDirection,
-                entry: referenceWickPrice,
-                sl: slPrice,
-                tp1: tp1Price,
-                tp2: tp2Price,
-                currentPrice: price,
-                time: new Date().toISOString()
-            });
-            sheets.appendSignal({
-                type: 'TRIGGERED',
-                direction: signalDirection,
-                entry: referenceWickPrice,
-                sl: slPrice,
-                tp1: tp1Price,
-                tp2: tp2Price,
-                currentPrice: price
-            });
+            if (isInvalidated) {
+                // [Bug#1 Fix] เรียก clearActiveSignal() เพื่อล้างค่าตัวแปรทุกตัวให้สะอาดก่อนกลับ SCANNING
+                const invalidDir = signalDirection;
+                const invalidEntry = referenceWickPrice;
+                const invalidSL = cancelPrice;
 
-            const msg = `🔥 <b>WickHunter XAU | SIGNAL TRIGGERED</b> 🔥\n\n` +
-                `✅ <b>Direction:</b> ${signalDirection}\n` +
-                `✅ <b>Action:</b> เคลียร์ไส้เทียนสำเร็จ!\n\n` +
-                `📍 <b>Entry Price:</b> ${referenceWickPrice.toFixed(2)}\n` +
-                `🛑 <b>Stop Loss:</b> ${slPrice.toFixed(2)}\n` +
-                `🎯 <b>TP 1 (RR 1:2):</b> ${tp1Price.toFixed(2)}\n` +
-                `🎯 <b>TP 2 (RR 1:3):</b> ${tp2Price.toFixed(2)}\n\n` +
-                `🚀 <b>Current Price:</b> ${price.toFixed(2)}${sourceNote}`;
+                currentState = STATES.SCANNING;
+                clearActiveSignal();
+                console.log(`❌ [SMC Engine]: กราฟผิดทาง! ราคาทะลุขอบโซน (${invalidSL.toFixed(2)}) ระบบกลับไป SCANNING`);
+                dashboardState.update({ botState: currentState });
 
-            await sendSignal(msg);
-            activeTrade = {
-                direction: signalDirection,
-                entry: referenceWickPrice,
-                sl: slPrice,
-                tp1: tp1Price,
-                tp2: tp2Price,
-                isTp1Hit: false,
-                time: new Date().toISOString()
-            };
-            currentState = STATES.MONITORING_TRADE;
-            console.log(`🟢 [SMC Engine]: สัญญาณถูกส่งแล้ว! เปลี่ยนสถานะบอทเป็น MONITORING_TRADE`);
-            dashboardState.update({ botState: currentState, activeTrade });
+                // INVALIDATED: อัปเดต Dashboard State และ Sheets
+                dashboardState.addSignal({
+                    type: 'INVALIDATED',
+                    direction: invalidDir,
+                    entry: invalidEntry,
+                    sl: invalidSL,
+                    currentPrice: price,
+                    time: new Date().toISOString()
+                });
+                sheets.appendSignal({
+                    type: 'INVALIDATED',
+                    direction: invalidDir,
+                    entry: invalidEntry,
+                    sl: invalidSL,
+                    currentPrice: price
+                });
+
+                await sendSignal(`❌ <b>ยกเลิกสัญญาณ ${invalidDir}</b>\n\nกราฟผิดทาง ทะลุจุด SL ที่ <b>${invalidSL.toFixed(2)}</b> ก่อนการเบรก ระบบกลับสู่โหมดสแกนหาโซนใหม่...${sourceNote}`);
+                return;
+            }
+
+
+            if (isBreakout) {
+                currentState = STATES.TRIGGERED;
+                waitingStartedAt = null;
+                dashboardState.update({ botState: currentState });
+                const slPrice = cancelPrice;
+                let risk = Math.abs(referenceWickPrice - slPrice);
+                const minRisk = ENGINE_CONFIG.MIN_TP_POINTS / 2;
+                if (risk < minRisk) {
+                    risk = minRisk;
+                }
+
+                let tp1Price = 0;
+                let tp2Price = 0;
+
+                if (signalDirection === 'BUY') {
+                    tp1Price = referenceWickPrice + (risk * 2);
+                    tp2Price = referenceWickPrice + (risk * 3);
+                } else if (signalDirection === 'SELL') {
+                    tp1Price = referenceWickPrice - (risk * 2);
+                    tp2Price = referenceWickPrice - (risk * 3);
+                }
+
+                // TRIGGERED: อัปเดต Dashboard State
+                dashboardState.addSignal({
+                    type: 'TRIGGERED',
+                    direction: signalDirection,
+                    entry: referenceWickPrice,
+                    sl: slPrice,
+                    tp1: tp1Price,
+                    tp2: tp2Price,
+                    currentPrice: price,
+                    time: new Date().toISOString()
+                });
+                sheets.appendSignal({
+                    type: 'TRIGGERED',
+                    direction: signalDirection,
+                    entry: referenceWickPrice,
+                    sl: slPrice,
+                    tp1: tp1Price,
+                    tp2: tp2Price,
+                    currentPrice: price
+                });
+
+                const msg = `🔥 <b>WickHunter XAU | SIGNAL TRIGGERED</b> 🔥\n\n` +
+                    `✅ <b>Direction:</b> ${signalDirection}\n` +
+                    `✅ <b>Action:</b> เคลียร์ไส้เทียนสำเร็จ!\n\n` +
+                    `📍 <b>Entry Price:</b> ${referenceWickPrice.toFixed(2)}\n` +
+                    `🛑 <b>Stop Loss:</b> ${slPrice.toFixed(2)}\n` +
+                    `🎯 <b>TP 1 (RR 1:2):</b> ${tp1Price.toFixed(2)}\n` +
+                    `🎯 <b>TP 2 (RR 1:3):</b> ${tp2Price.toFixed(2)}\n\n` +
+                    `🚀 <b>Current Price:</b> ${price.toFixed(2)}${sourceNote}`;
+
+                await sendSignal(msg);
+                activeTrade = {
+                    direction: signalDirection,
+                    entry: referenceWickPrice,
+                    sl: slPrice,
+                    tp1: tp1Price,
+                    tp2: tp2Price,
+                    isTp1Hit: false,
+                    time: new Date().toISOString()
+                };
+                currentState = STATES.MONITORING_TRADE;
+                console.log(`🟢 [SMC Engine]: สัญญาณถูกส่งแล้ว! เปลี่ยนสถานะบอทเป็น MONITORING_TRADE`);
+                dashboardState.update({ botState: currentState, activeTrade });
+            }
         }
+
+    } finally {
+        isProcessingTick = false;
     }
 }
 
