@@ -30,24 +30,29 @@ async function getCandles(resolution, limit) {
 
             for (let i = 0; i < rawValues.length; i++) {
                 const q = rawValues[i];
+                const timeMs = new Date(q.datetime).getTime();
                 
-                const open = parseFloat(q.open);
-                const high = parseFloat(q.high);
-                const low = parseFloat(q.low);
-                const close = parseFloat(q.close);
+                // [FIX] เช็ควันและเวลา UTC เพื่อกรองช่วงเสาร์-อาทิตย์ที่ตลาดปิด
+                const d = new Date(timeMs);
+                const day = d.getUTCDay();
+                const hour = d.getUTCHours();
+                
+                let isClosed = false;
+                if (day === 6) isClosed = true; // เสาร์ ปิดทั้งวัน
+                else if (day === 0 && hour < 22) isClosed = true; // อาทิตย์ ปิดก่อน 22:00 UTC
+                else if (day === 5 && hour >= 22) isClosed = true; // ศุกร์ ปิดหลัง 22:00 UTC
 
-                // [FIX] กรองแท่งเทียนขยะ (ช่วงเสาร์-อาทิตย์ที่ราคาหยุดนิ่ง)
-                // ถ้าราคา High เท่ากับ Low แปลว่าตลาดปิด ไม่มีการขยับของราคา ให้ข้ามไป
-                if (high === low) {
+                // ถ้าเป็นช่วงตลาดปิด ให้ข้ามแท่งนี้ไปเลย เพื่อไม่ให้เปลืองโควต้า 48 แท่ง
+                if (isClosed) {
                     continue;
                 }
-                
+
                 candles.push({
-                    open: open,
-                    high: high,
-                    low: low,
-                    close: close,
-                    time: new Date(q.datetime).getTime() / 1000
+                    open: parseFloat(q.open),
+                    high: parseFloat(q.high),
+                    low: parseFloat(q.low),
+                    close: parseFloat(q.close),
+                    time: timeMs / 1000
                 });
             }
             return candles;
