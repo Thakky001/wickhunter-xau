@@ -31,11 +31,22 @@ async function getCandles(resolution, limit) {
             for (let i = 0; i < rawValues.length; i++) {
                 const q = rawValues[i];
                 
+                const open = parseFloat(q.open);
+                const high = parseFloat(q.high);
+                const low = parseFloat(q.low);
+                const close = parseFloat(q.close);
+
+                // [FIX] กรองแท่งเทียนขยะ (ช่วงเสาร์-อาทิตย์ที่ราคาหยุดนิ่ง)
+                // ถ้าราคา High เท่ากับ Low แปลว่าตลาดปิด ไม่มีการขยับของราคา ให้ข้ามไป
+                if (high === low) {
+                    continue;
+                }
+                
                 candles.push({
-                    open: parseFloat(q.open),
-                    high: parseFloat(q.high),
-                    low: parseFloat(q.low),
-                    close: parseFloat(q.close),
+                    open: open,
+                    high: high,
+                    low: low,
+                    close: close,
                     time: new Date(q.datetime).getTime() / 1000
                 });
             }
