@@ -201,8 +201,14 @@ async function checkMarketLogic() {
 
                         if (hasIDM && hasChoCh) {
                             console.log(`   ✅ [PA+IDM+ChoCh] ผ่านครบ 3 ด่าน! โครงสร้างยืนยันกลับตัวแล้ว → เข้าเทรดได้`);
+                        } else if (!hasIDM && hasChoCh) {
+                            console.log(`   ⏭️  มี PA และ ChoCh แล้ว แต่ "ขาดการกวาด IDM (Liquidity Sweep)" ลอจิกไม่ครบ → ไม่เข้าเทรด`);
+                            continue;
+                        } else if (hasIDM && !hasChoCh) {
+                            console.log(`   ⏭️  มี PA และกวาด IDM แล้ว ตอนนี้กำลังรอจังหวะเบรค ChoCh → รอรอบถัดไป`);
+                            continue;
                         } else {
-                            console.log(`   ⏭️  เจอ PA ล่วงหน้าแล้ว ตอนนี้กำลังรอจังหวะเบรค ChoCh → รอรอบถัดไป`);
+                            console.log(`   ⏭️  เจอ PA แล้ว แต่ยังขาดทั้ง IDM Sweep และ ChoCh → รอรอบถัดไป`);
                             continue;
                         }
                         foundValidSignal = true;
