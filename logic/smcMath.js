@@ -311,7 +311,7 @@ function checkIDMSweep(m5Candles, direction) {
         let currentSwingLow = m5Candles[currentIndex].low;
         let currentSwingIndex = currentIndex;
         
-        for (let i = currentIndex; i >= Math.max(0, currentIndex - 3); i--) {
+        for (let i = currentIndex; i >= Math.max(0, currentIndex - 10); i--) {
             if (m5Candles[i].low <= currentSwingLow) {
                 currentSwingLow = m5Candles[i].low;
                 currentSwingIndex = i;
@@ -338,7 +338,7 @@ function checkIDMSweep(m5Candles, direction) {
         let currentSwingHigh = m5Candles[currentIndex].high;
         let currentSwingIndex = currentIndex;
         
-        for (let i = currentIndex; i >= Math.max(0, currentIndex - 3); i--) {
+        for (let i = currentIndex; i >= Math.max(0, currentIndex - 10); i--) {
             if (m5Candles[i].high >= currentSwingHigh) {
                 currentSwingHigh = m5Candles[i].high;
                 currentSwingIndex = i;
