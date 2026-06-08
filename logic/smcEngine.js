@@ -1,5 +1,5 @@
 const { sendSignal } = require('../services/telegram');
-const { findFVG, findOrderBlock, checkPriceActionInZone, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep } = require('./smcMath');
+const { findFVG, findOrderBlock, checkPriceActionInZone, checkRecentPA, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep } = require('./smcMath');
 const { getCandles } = require('../services/twelveData');
 const dashboardState = require('../services/dashboardState');
 const sheets = require('../services/sheets');
@@ -186,11 +186,12 @@ async function checkMarketLogic() {
                         continue;
                     }
 
-                    const paResult = checkPriceActionInZone(closedM5Candle, zone);
+                    // [NEW] เช็คหา PA ที่เกิดขึ้นในช่วง 10 แท่งล่าสุดในโซน (เพื่อไม่ให้พลาดจังหวะการสะสมกำลังก่อนเบรค ChoCh)
+                    const paResult = checkRecentPA(closedM5Array, zone, 10);
 
                     if (paResult.isValid) {
                         foundPA = true;
-                        console.log(`   ✨ พบ PA ในโซน [${zone.name}] (${zone.bottom.toFixed(2)} - ${zone.top.toFixed(2)}) | Direction: ${paResult.direction}`);
+                        console.log(`   ✨ พบ PA (ย้อนหลังไม่เกิน 10 แท่ง) ในโซน [${zone.name}] (${zone.bottom.toFixed(2)} - ${zone.top.toFixed(2)}) | Direction: ${paResult.direction}`);
 
                         // [IDM + ChoCh] ต้องผ่านทั้งคู่ (AND) ตามหลัก SMC: กวาด Liquidity ก่อน → โครงสร้างเสียทรงยืนยัน
                         const hasIDM = checkIDMSweep(closedM5Array, paResult.direction);
@@ -199,9 +200,9 @@ async function checkMarketLogic() {
                         console.log(`   🔎 [IDM]: ${hasIDM ? '✅ พบ Liquidity Sweep' : '❌ ไม่พบ'} | [ChoCh]: ${hasChoCh ? '✅ โครงสร้างเสียทรง' : '❌ ยังไม่เสียทรง'}`);
 
                         if (hasIDM && hasChoCh) {
-                            console.log(`   ✅ [IDM+ChoCh] ผ่านทั้งคู่! กวาด Liquidity แล้ว + โครงสร้างยืนยันกลับตัว → เข้าเทรดได้`);
+                            console.log(`   ✅ [PA+IDM+ChoCh] ผ่านครบ 3 ด่าน! โครงสร้างยืนยันกลับตัวแล้ว → เข้าเทรดได้`);
                         } else {
-                            console.log(`   ⏭️  [IDM+ChoCh] พบ PA แต่ยังไม่ผ่านครบทั้ง 2 เงื่อนไข → ข้ามโซนนี้`);
+                            console.log(`   ⏭️  เจอ PA ล่วงหน้าแล้ว ตอนนี้กำลังรอจังหวะเบรค ChoCh → รอรอบถัดไป`);
                             continue;
                         }
                         foundValidSignal = true;

@@ -364,4 +364,17 @@ function checkIDMSweep(m5Candles, direction) {
     return false;
 }
 
-module.exports = { findFVG, findOrderBlock, checkPriceActionInZone, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep };
+// ─── Recent Price Action Lookback ──────────────────────────────────────────────
+function checkRecentPA(m5Candles, zone, lookback = 10) {
+    // ลูปย้อนหลังจากแท่งล่าสุดลงไปในอดีต (ไม่เกิน lookback แท่ง)
+    for (let i = m5Candles.length - 1; i >= Math.max(0, m5Candles.length - lookback); i--) {
+        const paResult = checkPriceActionInZone(m5Candles[i], zone);
+        if (paResult.isValid) {
+            // เจอ PA ที่ไหน คืนค่าของแท่งนั้นกลับไปใช้เป็นจุดอ้างอิง SL ทันที
+            return paResult;
+        }
+    }
+    return { isValid: false };
+}
+
+module.exports = { findFVG, findOrderBlock, checkPriceActionInZone, checkRecentPA, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep };
