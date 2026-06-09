@@ -190,6 +190,23 @@ async function checkMarketLogic() {
                     const paResult = checkRecentPA(closedM5Array, zone, 10);
 
                     if (paResult.isValid) {
+                        // [Zone Violation Check] ตรวจสอบว่าโซนถูกทำลายไปแล้วหรือยัง (ราคาปิดทะลุโซน)
+                        let zoneViolated = false;
+                        for (let i = paResult.candleIndex; i < closedM5Array.length; i++) {
+                            const c = closedM5Array[i];
+                            if (paResult.direction === 'BUY' && c.close < zone.bottom) {
+                                console.log(`   💥 โซน [${zone.name}] ถูกทำลายแล้ว (ราคาปิดทะลุขอบล่าง ${zone.bottom.toFixed(2)}) → ยกเลิกการรอ ChoCh`);
+                                zoneViolated = true;
+                                break;
+                            }
+                            if (paResult.direction === 'SELL' && c.close > zone.top) {
+                                console.log(`   💥 โซน [${zone.name}] ถูกทำลายแล้ว (ราคาปิดทะลุขอบบน ${zone.top.toFixed(2)}) → ยกเลิกการรอ ChoCh`);
+                                zoneViolated = true;
+                                break;
+                            }
+                        }
+                        if (zoneViolated) continue;
+
                         foundPA = true;
                         console.log(`   ✨ พบ PA (ย้อนหลังไม่เกิน 10 แท่ง) ในโซน [${zone.name}] (${zone.bottom.toFixed(2)} - ${zone.top.toFixed(2)}) | Direction: ${paResult.direction}`);
 
