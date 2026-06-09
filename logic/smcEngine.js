@@ -19,7 +19,7 @@ const ENGINE_CONFIG = {
     SPREAD_BUFFER: 0.5,          // [NEW] ระยะเผื่อสเปรดสเปรดสำหรับไม้ SELL (0.5 USD หรือ 50 จุด)
     SWING_LOOKBACK_CANDLES: 10,  // จำนวนแท่ง M5 ย้อนหลังที่ใช้หา Swing High/Low
     MAX_SL_POINTS: 15.0,         // จำกัดระยะ SL สูงสุดไม่เกิน 15.0 USD (1,500 จุด)
-    MIN_TP_POINTS: 12.0,         // จำกัดระยะ TP ขั้นต่ำไม่น้อยกว่า 12.0 USD (1,200 จุด)
+    MIN_TP_POINTS: 8.0,          // จำกัดระยะ TP ขั้นต่ำไม่น้อยกว่า 8.0 USD (800 จุด) เพื่อให้ SL กว้างพอที่จะรอดจากการสะบัด
     ENTRY_MODE: 'CANDLE_CLOSE',  // [Fix#2] สลับเป็น CANDLE_CLOSE เพื่อเข้าที่ราคาปิดแท่ง PA (ไม่ใช่ยอด High ที่เป็น Resistance)
     MAX_ZONE_AGE_HOURS: 48       // กรองโซน H1 ย้อนหลังไม่เกิน 48 ชั่วโมง (2 วัน)
 };
@@ -230,7 +230,7 @@ async function checkMarketLogic() {
                             referenceWickPrice = closedM5Candle.close; // ใช้ราคาปิดเป็นจุดเข้า
 
                             if (ENGINE_CONFIG.SL_MODE === 'SWING_HIGH_LOW') {
-                                const pIndex = paResult.candleIndex; 
+                                const pIndex = paResult.candleIndex;
                                 const startIndex = Math.max(0, pIndex - ENGINE_CONFIG.SWING_LOOKBACK_CANDLES);
                                 const recentCandles = closedM5Array.slice(startIndex, pIndex + 1);
                                 if (signalDirection === 'BUY') {
@@ -321,7 +321,7 @@ async function checkMarketLogic() {
                         referenceWickPrice = paResult.triggerWickPrice;
 
                         if (ENGINE_CONFIG.SL_MODE === 'SWING_HIGH_LOW') {
-                            const pIndex = paResult.candleIndex; 
+                            const pIndex = paResult.candleIndex;
                             const startIndex = Math.max(0, pIndex - ENGINE_CONFIG.SWING_LOOKBACK_CANDLES);
                             const recentCandles = closedM5Array.slice(startIndex, pIndex + 1);
                             if (signalDirection === 'BUY') {
