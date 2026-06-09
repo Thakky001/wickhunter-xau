@@ -8,8 +8,10 @@ function findFVG(candles, m5Candles = []) {
         if (c3.low > c1.high) {
             // [Strict Mitigation] โซนถูกใช้ไปแล้วถ้าราคากลับลงมาแตะ (low <= top)
             let isMitigated = false;
+            // [Mitigation Fix] วัดที่ราคาปิด (Body) ไม่ใช่ปลายไส้
+            // โซนพังเมื่อแท่งเทียน "ปิดทะลุ" ขอบโซนเท่านั้น ปลายไส้สะบัดผ่านนับเป็น Liquidity Sweep ไม่ใช่ Mitigation
             for (let j = i + 1; j < candles.length; j++) {
-                if (candles[j].low <= c3.low) {
+                if (Math.min(candles[j].open, candles[j].close) <= c3.low) {
                     isMitigated = true;
                     break;
                 }
@@ -18,7 +20,7 @@ function findFVG(candles, m5Candles = []) {
             // เช็กการทำลายโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
             if (!isMitigated && m5Candles.length > 0) {
                 for (let k = 0; k < m5Candles.length; k++) {
-                    if (m5Candles[k].time >= c3.time && m5Candles[k].low <= c3.low) {
+                    if (m5Candles[k].time >= c3.time && Math.min(m5Candles[k].open, m5Candles[k].close) <= c3.low) {
                         isMitigated = true;
                         break;
                     }
@@ -38,8 +40,9 @@ function findFVG(candles, m5Candles = []) {
         else if (c3.high < c1.low) {
             // [Strict Mitigation] โซนถูกใช้ไปแล้วถ้าราคากลับขึ้นมาแตะ top (c1.low)
             let isMitigated = false;
+            // [Mitigation Fix] วัดที่ราคาปิด (Body) ไม่ใช่ปลายไส้
             for (let j = i + 1; j < candles.length; j++) {
-                if (candles[j].high >= c1.low) {
+                if (Math.max(candles[j].open, candles[j].close) >= c1.low) {
                     isMitigated = true;
                     break;
                 }
@@ -48,7 +51,7 @@ function findFVG(candles, m5Candles = []) {
             // เช็กการทำลายโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
             if (!isMitigated && m5Candles.length > 0) {
                 for (let k = 0; k < m5Candles.length; k++) {
-                    if (m5Candles[k].time >= c3.time && m5Candles[k].high >= c1.low) {
+                    if (m5Candles[k].time >= c3.time && Math.max(m5Candles[k].open, m5Candles[k].close) >= c1.low) {
                         isMitigated = true;
                         break;
                     }
@@ -84,8 +87,9 @@ function findOrderBlock(candles, m5Candles = []) {
         if (isPrevBearish && isCurrBullish && curr.close > prev.high) {
             // [Strict Mitigation] โซนถูกใช้ไปแล้วถ้าราคาทะลุลงต่ำกว่า bottom (prev.low)
             let isMitigated = false;
+            // [Mitigation Fix] วัดที่ราคาปิด (Body) ไม่ใช่ปลายไส้
             for (let j = i + 1; j < candles.length; j++) {
-                if (candles[j].low <= prev.low) {
+                if (Math.min(candles[j].open, candles[j].close) <= prev.low) {
                     isMitigated = true;
                     break;
                 }
@@ -94,7 +98,7 @@ function findOrderBlock(candles, m5Candles = []) {
             // เช็กการทำลายโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
             if (!isMitigated && m5Candles.length > 0) {
                 for (let k = 0; k < m5Candles.length; k++) {
-                    if (m5Candles[k].time >= curr.time && m5Candles[k].low <= prev.low) {
+                    if (m5Candles[k].time >= curr.time && Math.min(m5Candles[k].open, m5Candles[k].close) <= prev.low) {
                         isMitigated = true;
                         break;
                     }
@@ -114,8 +118,9 @@ function findOrderBlock(candles, m5Candles = []) {
         else if (isPrevBullish && isCurrBearish && curr.close < prev.low) {
             // [Strict Mitigation] โซนถูกใช้ไปแล้วถ้าราคากลับขึ้นมาทะลุ top (prev.high)
             let isMitigated = false;
+            // [Mitigation Fix] วัดที่ราคาปิด (Body) ไม่ใช่ปลายไส้
             for (let j = i + 1; j < candles.length; j++) {
-                if (candles[j].high >= prev.high) {
+                if (Math.max(candles[j].open, candles[j].close) >= prev.high) {
                     isMitigated = true;
                     break;
                 }
@@ -124,7 +129,7 @@ function findOrderBlock(candles, m5Candles = []) {
             // เช็กการทำลายโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
             if (!isMitigated && m5Candles.length > 0) {
                 for (let k = 0; k < m5Candles.length; k++) {
-                    if (m5Candles[k].time >= curr.time && m5Candles[k].high >= prev.high) {
+                    if (m5Candles[k].time >= curr.time && Math.max(m5Candles[k].open, m5Candles[k].close) >= prev.high) {
                         isMitigated = true;
                         break;
                     }
@@ -327,10 +332,13 @@ function getTradingRange(h1Candles, lookback = 24) {
 }
 
 // ─── IDM (Inducement / Liquidity Sweep) ────────────────────────────────────────
-function checkIDMSweep(m5Candles, direction) {
+function checkIDMSweep(m5Candles, direction, paIndex = null) {
     if (m5Candles.length < 15) return false;
 
-    const currentIndex = m5Candles.length - 1;
+    // [IDM Sync Fix] ถ้ามี paIndex ให้ใช้แท่ง PA เป็นจุดอ้างอิง
+    // มองหา Sweep เฉพาะช่วงก่อนหรือที่ตำแหน่ง PA เท่านั้น
+    // ป้องกันบอทไปยึด Noise จากแท่งล่าสุดที่ไม่เกี่ยวกับ Setup ปัจจุบัน
+    const currentIndex = paIndex !== null ? paIndex : m5Candles.length - 1;
 
     if (direction === 'BUY') {
         let currentSwingLow = m5Candles[currentIndex].low;

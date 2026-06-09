@@ -194,7 +194,7 @@ async function checkMarketLogic() {
                         console.log(`   ✨ พบ PA (ย้อนหลังไม่เกิน 10 แท่ง) ในโซน [${zone.name}] (${zone.bottom.toFixed(2)} - ${zone.top.toFixed(2)}) | Direction: ${paResult.direction}`);
 
                         // [IDM + ChoCh] ต้องผ่านทั้งคู่ (AND) ตามหลัก SMC: กวาด Liquidity ก่อน → โครงสร้างเสียทรงยืนยัน
-                        const hasIDM = checkIDMSweep(closedM5Array, paResult.direction);
+                        const hasIDM = checkIDMSweep(closedM5Array, paResult.direction, paResult.candleIndex);
                         const chochResult = checkChoCh(closedM5Array, paResult.direction, paResult.candleIndex);
                         const hasChoCh = chochResult.isValid;
 
@@ -243,8 +243,10 @@ async function checkMarketLogic() {
 
                             let risk = Math.abs(referenceWickPrice - cancelPrice);
                             if (risk > ENGINE_CONFIG.MAX_SL_POINTS) {
-                                risk = ENGINE_CONFIG.MAX_SL_POINTS;
-                                cancelPrice = signalDirection === 'BUY' ? referenceWickPrice - risk : referenceWickPrice + risk;
+                                // [SL Fix] ไม่บีบ SL ดื้อๆ → ข้ามสัญญาณนี้ไปเลย
+                                // เพราะ SL ที่บีบโดยไม่มีโครงสร้างรองรับ = เหยื่อ SL Hunt ฟรี
+                                console.log(`   🚫 ข้ามสัญญาณ! เพราะระยะ SL กว้างเกินไป (${risk.toFixed(2)} pts > MAX ${ENGINE_CONFIG.MAX_SL_POINTS} pts) → รอโซนถัดไป`);
+                                continue;
                             }
 
                             const minRisk = ENGINE_CONFIG.MIN_TP_POINTS / 2;
@@ -332,8 +334,9 @@ async function checkMarketLogic() {
 
                         let risk = Math.abs(referenceWickPrice - cancelPrice);
                         if (risk > ENGINE_CONFIG.MAX_SL_POINTS) {
-                            risk = ENGINE_CONFIG.MAX_SL_POINTS;
-                            cancelPrice = signalDirection === 'BUY' ? referenceWickPrice - risk : referenceWickPrice + risk;
+                            // [SL Fix] ไม่บีบ SL ดื้อๆ → ข้ามสัญญาณนี้ไปเลย
+                            console.log(`   🚫 ข้ามสัญญาณ! เพราะระยะ SL กว้างเกินไป (${risk.toFixed(2)} pts > MAX ${ENGINE_CONFIG.MAX_SL_POINTS} pts) → รอโซนถัดไป`);
+                            continue;
                         }
 
                         const minRisk = ENGINE_CONFIG.MIN_TP_POINTS / 2;
