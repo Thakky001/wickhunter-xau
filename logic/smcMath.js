@@ -203,7 +203,7 @@ function checkPriceActionInZone(candle, zone) {
 }
 
 function checkChoCh(m5Candles, direction) {
-    if (m5Candles.length < 5) return false;
+    if (m5Candles.length < 5) return { isValid: false };
 
     const paCandle = m5Candles[m5Candles.length - 1];
 
@@ -225,7 +225,8 @@ function checkChoCh(m5Candles, direction) {
         }
         
         const breakMargin = 0.3;
-        return paCandle.close > (targetHigh + breakMargin);
+        const isValid = paCandle.close > (targetHigh + breakMargin);
+        return { isValid, targetPrice: targetHigh, breakPrice: paCandle.close, margin: breakMargin };
     }
 
     if (direction === 'SELL') {
@@ -246,10 +247,11 @@ function checkChoCh(m5Candles, direction) {
         }
 
         const breakMargin = 0.3;
-        return paCandle.close < (targetLow - breakMargin);
+        const isValid = paCandle.close < (targetLow - breakMargin);
+        return { isValid, targetPrice: targetLow, breakPrice: paCandle.close, margin: breakMargin };
     }
 
-    return false;
+    return { isValid: false };
 }
 
 // ─── HTF Trend Filter ─────────────────────────────────────────────────────────
