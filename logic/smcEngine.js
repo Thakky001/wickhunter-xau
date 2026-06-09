@@ -225,7 +225,9 @@ async function checkMarketLogic() {
                             referenceWickPrice = closedM5Candle.close; // ใช้ราคาปิดเป็นจุดเข้า
 
                             if (ENGINE_CONFIG.SL_MODE === 'SWING_HIGH_LOW') {
-                                const recentCandles = m5Candles.slice(-ENGINE_CONFIG.SWING_LOOKBACK_CANDLES - 1, -1);
+                                const pIndex = paResult.candleIndex; 
+                                const startIndex = Math.max(0, pIndex - ENGINE_CONFIG.SWING_LOOKBACK_CANDLES);
+                                const recentCandles = closedM5Array.slice(startIndex, pIndex + 1);
                                 if (signalDirection === 'BUY') {
                                     const swingLow = Math.min(...recentCandles.map(c => c.low));
                                     cancelPrice = swingLow - ENGINE_CONFIG.SL_BUFFER;
@@ -314,7 +316,9 @@ async function checkMarketLogic() {
                         referenceWickPrice = paResult.triggerWickPrice;
 
                         if (ENGINE_CONFIG.SL_MODE === 'SWING_HIGH_LOW') {
-                            const recentCandles = m5Candles.slice(-ENGINE_CONFIG.SWING_LOOKBACK_CANDLES - 1, -1);
+                            const pIndex = paResult.candleIndex; 
+                            const startIndex = Math.max(0, pIndex - ENGINE_CONFIG.SWING_LOOKBACK_CANDLES);
+                            const recentCandles = closedM5Array.slice(startIndex, pIndex + 1);
                             if (signalDirection === 'BUY') {
                                 const swingLow = Math.min(...recentCandles.map(c => c.low));
                                 cancelPrice = swingLow - ENGINE_CONFIG.SL_BUFFER;
@@ -790,9 +794,22 @@ async function processTickData(currentPrice, source = 'tick') {
     }
 }
 
-setInterval(checkMarketLogic, 120000);
-setInterval(checkWaitingGuard, WAITING_GUARD_INTERVAL_MS);
+function startSmartSyncLoop() {
+    checkMarketLogic(); // รันครั้งแรกทันที
 
-checkMarketLogic();
+    setInterval(() => {
+        const now = new Date();
+        const minutes = now.getMinutes();
+        const seconds = now.getSeconds();
+
+        // รันเฉพาะเมื่อนาทีหาร 5 ลงตัว และอยู่ที่วินาทีที่ 2
+        if (minutes % 5 === 0 && seconds === 2) {
+            checkMarketLogic();
+        }
+    }, 1000);
+}
+
+startSmartSyncLoop();
+setInterval(checkWaitingGuard, WAITING_GUARD_INTERVAL_MS);
 
 module.exports = { processTickData, forceScanNow };

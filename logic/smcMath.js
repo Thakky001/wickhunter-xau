@@ -224,6 +224,7 @@ function checkChoCh(m5Candles, direction, paIndex = null) {
     if (m5Candles.length < 5) return { isValid: false };
 
     const paCandle = m5Candles[m5Candles.length - 1];
+    const prevCandle = m5Candles[m5Candles.length - 2];
 
     // [Timing Fix] จำกัดการค้นหา fractal เฉพาะช่วงหลัง PA candle
     // ป้องกัน ChoCh ไปยืนยัน swing ที่ไม่เกี่ยวข้องกับ PA ปัจจุบัน
@@ -250,8 +251,11 @@ function checkChoCh(m5Candles, direction, paIndex = null) {
         }
 
         const breakMargin = 1.5; // เพิ่มจาก 0.3 → 1.5 pts (Gold spread เฉลี่ย 0.3-0.5 pts → 0.3 คือ noise)
-        const isValid = paCandle.close > (targetHigh + breakMargin);
-        return { isValid, targetPrice: targetHigh, breakPrice: paCandle.close, margin: breakMargin };
+        // [Fresh Break Fix] แท่งก่อนหน้าต้องยังไม่ทะลุ Margin และแท่งปัจจุบันทะลุรวดเดียว
+        const isFreshBreak = prevCandle.close <= (targetHigh + breakMargin) && paCandle.close > (targetHigh + breakMargin);
+        if (!isFreshBreak) return { isValid: false };
+
+        return { isValid: true, targetPrice: targetHigh, breakPrice: paCandle.close, margin: breakMargin };
     }
 
     if (direction === 'SELL') {
@@ -274,8 +278,11 @@ function checkChoCh(m5Candles, direction, paIndex = null) {
         }
 
         const breakMargin = 1.5; // เพิ่มจาก 0.3 → 1.5 pts (Gold spread เฉลี่ย 0.3-0.5 pts → 0.3 คือ noise)
-        const isValid = paCandle.close < (targetLow - breakMargin);
-        return { isValid, targetPrice: targetLow, breakPrice: paCandle.close, margin: breakMargin };
+        // [Fresh Break Fix] แท่งก่อนหน้าต้องยังไม่ทะลุ Margin และแท่งปัจจุบันทะลุรวดเดียว
+        const isFreshBreak = prevCandle.close >= (targetLow - breakMargin) && paCandle.close < (targetLow - breakMargin);
+        if (!isFreshBreak) return { isValid: false };
+
+        return { isValid: true, targetPrice: targetLow, breakPrice: paCandle.close, margin: breakMargin };
     }
 
     return { isValid: false };
