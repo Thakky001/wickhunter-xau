@@ -199,8 +199,13 @@ async function checkMarketLogic() {
                         const hasChoCh = chochResult.isValid;
 
                         console.log(`   🔎 [IDM]: ${hasIDM ? '✅ พบ Liquidity Sweep' : '❌ ไม่พบ'} | [ChoCh]: ${hasChoCh ? '✅ โครงสร้างเสียทรง' : '❌ ยังไม่เสียทรง'}`);
-                        if (hasChoCh && chochResult.targetPrice) {
-                            console.log(`      ↳ 📈 [ChoCh Detail]: ทะลุเป้า ${chochResult.targetPrice.toFixed(2)} ด้วยราคาปิด ${chochResult.breakPrice.toFixed(2)} (Margin: ${chochResult.margin})`);
+                        if (chochResult.targetPrice) {
+                            if (hasChoCh) {
+                                console.log(`      ↳ 📈 [ChoCh Detail]: ทะลุเป้า ${chochResult.targetPrice.toFixed(2)} ด้วยราคาปิด ${chochResult.breakPrice.toFixed(2)} (Margin: ${chochResult.margin})`);
+                            } else {
+                                const requiredPrice = paResult.direction === 'BUY' ? chochResult.targetPrice + chochResult.margin : chochResult.targetPrice - chochResult.margin;
+                                console.log(`      ↳ ⏳ [Waiting ChoCh]: รอกราฟเบรคเป้าหมาย ${chochResult.targetPrice.toFixed(2)} (ต้องทะลุ ${requiredPrice.toFixed(2)})`);
+                            }
                         }
 
                         if (hasIDM && hasChoCh) {

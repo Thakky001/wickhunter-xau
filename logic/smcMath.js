@@ -253,7 +253,7 @@ function checkChoCh(m5Candles, direction, paIndex = null) {
         const breakMargin = 1.5; // เพิ่มจาก 0.3 → 1.5 pts (Gold spread เฉลี่ย 0.3-0.5 pts → 0.3 คือ noise)
         // [Fresh Break Fix] แท่งก่อนหน้าต้องยังไม่ทะลุ Margin และแท่งปัจจุบันทะลุรวดเดียว
         const isFreshBreak = prevCandle.close <= (targetHigh + breakMargin) && paCandle.close > (targetHigh + breakMargin);
-        if (!isFreshBreak) return { isValid: false };
+        if (!isFreshBreak) return { isValid: false, targetPrice: targetHigh, margin: breakMargin };
 
         return { isValid: true, targetPrice: targetHigh, breakPrice: paCandle.close, margin: breakMargin };
     }
@@ -280,7 +280,7 @@ function checkChoCh(m5Candles, direction, paIndex = null) {
         const breakMargin = 1.5; // เพิ่มจาก 0.3 → 1.5 pts (Gold spread เฉลี่ย 0.3-0.5 pts → 0.3 คือ noise)
         // [Fresh Break Fix] แท่งก่อนหน้าต้องยังไม่ทะลุ Margin และแท่งปัจจุบันทะลุรวดเดียว
         const isFreshBreak = prevCandle.close >= (targetLow - breakMargin) && paCandle.close < (targetLow - breakMargin);
-        if (!isFreshBreak) return { isValid: false };
+        if (!isFreshBreak) return { isValid: false, targetPrice: targetLow, margin: breakMargin };
 
         return { isValid: true, targetPrice: targetLow, breakPrice: paCandle.close, margin: breakMargin };
     }
