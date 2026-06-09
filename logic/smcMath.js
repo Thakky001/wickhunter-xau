@@ -210,10 +210,10 @@ function checkChoCh(m5Candles, direction) {
     if (direction === 'BUY') {
         // หา Swing High (Fractal High) ล่าสุด → ใช้ Close ของแท่ง Fractal (Body-based BOS)
         let targetHigh = null;
-        for (let i = m5Candles.length - 3; i >= 2; i--) {
+        for (let i = m5Candles.length - 2; i >= 1; i--) {
             const c = m5Candles[i];
-            if (c.high > m5Candles[i - 1].high && c.high > m5Candles[i - 2].high &&
-                c.high > m5Candles[i + 1].high && c.high > m5Candles[i + 2].high) {
+            if (c.high > m5Candles[i - 1].high &&
+                c.high > m5Candles[i + 1].high) {
                 targetHigh = Math.max(c.open, c.close); // ใช้ Close/Open (ขอบบนของ Body) แทน High (ปลายไส้)
                 break;
             }
@@ -224,16 +224,17 @@ function checkChoCh(m5Candles, direction) {
             targetHigh = Math.max(...prevCandles.map(c => Math.max(c.open, c.close)));
         }
         
-        return paCandle.close > targetHigh;
+        const breakMargin = 0.3;
+        return paCandle.close > (targetHigh + breakMargin);
     }
 
     if (direction === 'SELL') {
         // หา Swing Low (Fractal Low) ล่าสุด → ใช้ Close ของแท่ง Fractal (Body-based BOS)
         let targetLow = null;
-        for (let i = m5Candles.length - 3; i >= 2; i--) {
+        for (let i = m5Candles.length - 2; i >= 1; i--) {
             const c = m5Candles[i];
-            if (c.low < m5Candles[i - 1].low && c.low < m5Candles[i - 2].low &&
-                c.low < m5Candles[i + 1].low && c.low < m5Candles[i + 2].low) {
+            if (c.low < m5Candles[i - 1].low &&
+                c.low < m5Candles[i + 1].low) {
                 targetLow = Math.min(c.open, c.close); // ใช้ Close/Open (ขอบล่างของ Body) แทน Low (ปลายไส้)
                 break;
             }
@@ -244,7 +245,8 @@ function checkChoCh(m5Candles, direction) {
             targetLow = Math.min(...prevCandles.map(c => Math.min(c.open, c.close)));
         }
 
-        return paCandle.close < targetLow;
+        const breakMargin = 0.3;
+        return paCandle.close < (targetLow - breakMargin);
     }
 
     return false;
