@@ -226,26 +226,24 @@ function checkChoCh(m5Candles, direction, paIndex = null) {
     const paCandle = m5Candles[m5Candles.length - 1];
     const prevCandle = m5Candles[m5Candles.length - 2];
 
-    // [Timing Fix] จำกัดการค้นหา fractal เฉพาะช่วงหลัง PA candle
-    // ป้องกัน ChoCh ไปยืนยัน swing ที่ไม่เกี่ยวข้องกับ PA ปัจจุบัน
-    // paIndex + 1 = candle ที่เก่าสุดที่ยังอยู่ใน "swing context" เดียวกับ PA
-    const fractalFloor = paIndex !== null ? paIndex + 1 : 1;
-
     if (direction === 'BUY') {
-        // หา Swing High (Fractal High) ล่าสุด → ใช้ Close ของแท่ง Fractal (Body-based BOS)
         let targetHigh = null;
-        for (let i = m5Candles.length - 2; i >= fractalFloor; i--) {
-            const c = m5Candles[i];
-            if (c.high > m5Candles[i - 1].high &&
-                c.high > m5Candles[i + 1].high) {
-                targetHigh = Math.max(c.open, c.close); // ใช้ Close/Open (ขอบบนของ Body) แทน High (ปลายไส้)
-                break;
+        if (paIndex !== null && paIndex > 1) {
+            // [SMC True ChoCh] หา Fractal High สุดท้าย "ก่อน" เกิด PA
+            for (let i = paIndex - 1; i >= 1; i--) {
+                const c = m5Candles[i];
+                if (c.high > m5Candles[i - 1].high && c.high > m5Candles[i + 1].high) {
+                    targetHigh = Math.max(c.open, c.close); // ใช้ Body High
+                    break;
+                }
             }
         }
-        // Fallback: หากไม่พบ Fractal High → ใช้ body สูงสุดในช่วงหลัง PA
+        
+        // Fallback: ถ้าหา Fractal ไม่เจอ ให้เอาราคาเนื้อเทียนสูงสุดในช่วง 20 แท่งก่อน PA
         if (targetHigh === null) {
-            const startIdx = paIndex !== null ? paIndex + 1 : 0;
-            const prevCandles = m5Candles.slice(startIdx, -1);
+            const searchEnd = paIndex !== null ? paIndex : m5Candles.length - 1;
+            const searchStart = Math.max(0, searchEnd - 20);
+            const prevCandles = m5Candles.slice(searchStart, searchEnd);
             if (prevCandles.length === 0) return { isValid: false };
             targetHigh = Math.max(...prevCandles.map(c => Math.max(c.open, c.close)));
         }
@@ -259,20 +257,23 @@ function checkChoCh(m5Candles, direction, paIndex = null) {
     }
 
     if (direction === 'SELL') {
-        // หา Swing Low (Fractal Low) ล่าสุด → ใช้ Close ของแท่ง Fractal (Body-based BOS)
         let targetLow = null;
-        for (let i = m5Candles.length - 2; i >= fractalFloor; i--) {
-            const c = m5Candles[i];
-            if (c.low < m5Candles[i - 1].low &&
-                c.low < m5Candles[i + 1].low) {
-                targetLow = Math.min(c.open, c.close); // ใช้ Close/Open (ขอบล่างของ Body) แทน Low (ปลายไส้)
-                break;
+        if (paIndex !== null && paIndex > 1) {
+            // [SMC True ChoCh] หา Fractal Low สุดท้าย "ก่อน" เกิด PA
+            for (let i = paIndex - 1; i >= 1; i--) {
+                const c = m5Candles[i];
+                if (c.low < m5Candles[i - 1].low && c.low < m5Candles[i + 1].low) {
+                    targetLow = Math.min(c.open, c.close); // ใช้ Body Low
+                    break;
+                }
             }
         }
-        // Fallback: หากไม่พบ Fractal Low → ใช้ body ต่ำสุดในช่วงหลัง PA
+        
+        // Fallback: ถ้าหา Fractal ไม่เจอ ให้เอาราคาเนื้อเทียนต่ำสุดในช่วง 20 แท่งก่อน PA
         if (targetLow === null) {
-            const startIdx = paIndex !== null ? paIndex + 1 : 0;
-            const prevCandles = m5Candles.slice(startIdx, -1);
+            const searchEnd = paIndex !== null ? paIndex : m5Candles.length - 1;
+            const searchStart = Math.max(0, searchEnd - 20);
+            const prevCandles = m5Candles.slice(searchStart, searchEnd);
             if (prevCandles.length === 0) return { isValid: false };
             targetLow = Math.min(...prevCandles.map(c => Math.min(c.open, c.close)));
         }
