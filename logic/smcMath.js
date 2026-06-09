@@ -6,12 +6,12 @@ function findFVG(candles, m5Candles = []) {
 
         // Bullish FVG (Gap ขาขึ้น / โซน Buy)
         if (c3.low > c1.high) {
-            // [Strict Mitigation] โซนถูกใช้ไปแล้วถ้าราคากลับลงมาแตะ (low <= top)
+            // [Strict Mitigation] โซนถูกใช้ไปแล้วถ้าราคากลับลงมาทะลุขอบล่าง (c1.high)
             let isMitigated = false;
             // [Mitigation Fix] วัดที่ราคาปิด (Body) ไม่ใช่ปลายไส้
-            // โซนพังเมื่อแท่งเทียน "ปิดทะลุ" ขอบโซนเท่านั้น ปลายไส้สะบัดผ่านนับเป็น Liquidity Sweep ไม่ใช่ Mitigation
             for (let j = i + 1; j < candles.length; j++) {
-                if (Math.min(candles[j].open, candles[j].close) <= c3.low) {
+                // ✅ แก้เป็น c1.high แล้ว
+                if (Math.min(candles[j].open, candles[j].close) <= c1.high) {
                     isMitigated = true;
                     break;
                 }
@@ -20,7 +20,8 @@ function findFVG(candles, m5Candles = []) {
             // เช็กการทำลายโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
             if (!isMitigated && m5Candles.length > 0) {
                 for (let k = 0; k < m5Candles.length; k++) {
-                    if (m5Candles[k].time >= c3.time && Math.min(m5Candles[k].open, m5Candles[k].close) <= c3.low) {
+                    // ✅ แก้เป็น c1.high แล้ว
+                    if (m5Candles[k].time >= c3.time && Math.min(m5Candles[k].open, m5Candles[k].close) <= c1.high) {
                         isMitigated = true;
                         break;
                     }
@@ -32,7 +33,7 @@ function findFVG(candles, m5Candles = []) {
                     type: 'BUY_ZONE',
                     name: 'BULLISH_FVG',
                     top: c3.low,
-                    bottom: c1.high
+                    bottom: c1.high // ขอบล่างของโซน
                 });
             }
         }
