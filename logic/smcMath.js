@@ -1,8 +1,8 @@
 function findFVG(candles, m5Candles = []) {
     let fvgs = [];
     for (let i = 2; i < candles.length; i++) {
-        const c1 = candles[i - 2]; 
-        const c3 = candles[i];     
+        const c1 = candles[i - 2];
+        const c3 = candles[i];
 
         // Bullish FVG (Gap ขาขึ้น / โซน Buy)
         if (c3.low > c1.high) {
@@ -14,7 +14,7 @@ function findFVG(candles, m5Candles = []) {
                     break;
                 }
             }
-            
+
             // เช็กการทำลายโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
             if (!isMitigated && m5Candles.length > 0) {
                 for (let k = 0; k < m5Candles.length; k++) {
@@ -44,7 +44,7 @@ function findFVG(candles, m5Candles = []) {
                     break;
                 }
             }
-            
+
             // เช็กการทำลายโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
             if (!isMitigated && m5Candles.length > 0) {
                 for (let k = 0; k < m5Candles.length; k++) {
@@ -150,14 +150,14 @@ const MATH_CONFIG = {
 
 function checkPriceActionInZone(candle, zone) {
     const totalLength = candle.high - candle.low;
-    
+
     // กรองแท่งเทียนที่ไม่มีปริมาณการซื้อขาย (Micro-Wicks) ช่วงตลาดเงียบ
     if (totalLength < MATH_CONFIG.MIN_CANDLE_SIZE) {
         return { isValid: false };
     }
 
     const bodyLength = Math.abs(candle.open - candle.close);
-    
+
     const lowerWick = Math.min(candle.open, candle.close) - candle.low;
     const upperWick = candle.high - Math.max(candle.open, candle.close);
 
@@ -168,13 +168,19 @@ function checkPriceActionInZone(candle, zone) {
     const isBearishPA = upperWickPct > 0.5 && bodyLength < (totalLength * 0.35);
 
     if (zone.type === 'BUY_ZONE') {
-        const isTouchOrSweepZone = candle.low <= zone.top; 
+        const isTouchOrSweepZone = candle.low <= zone.top;
         const isCloseInsideOrAbove = candle.close >= zone.bottom;
 
-        if (isTouchOrSweepZone && isCloseInsideOrAbove && isBullishPA) {
-            return { 
-                isValid: true, 
-                direction: 'BUY', 
+        // [Zone Depth Filter] PA ต้องแตะใน BOTTOM 30% ของโซนเท่านั้น
+        // แรงซื้อจริงอยู่ที่ก้นโซน ไม่ใช่แค่เพิ่งเข้ามาในโซนด้านบน
+        const zoneHeight = zone.top - zone.bottom;
+        const bottomThreshold = zone.bottom + (zoneHeight * 0.3);
+        const isInDepthZone = candle.low <= bottomThreshold;
+
+        if (isTouchOrSweepZone && isCloseInsideOrAbove && isBullishPA && isInDepthZone) {
+            return {
+                isValid: true,
+                direction: 'BUY',
                 triggerWickPrice: candle.high,
                 cancelPrice: zone.bottom,
                 paCandleLow: candle.low,
@@ -187,10 +193,16 @@ function checkPriceActionInZone(candle, zone) {
         const isTouchOrSweepZone = candle.high >= zone.bottom;
         const isCloseInsideOrBelow = candle.close <= zone.top;
 
-        if (isTouchOrSweepZone && isCloseInsideOrBelow && isBearishPA) {
-            return { 
-                isValid: true, 
-                direction: 'SELL', 
+        // [Zone Depth Filter] PA ต้องแตะใน TOP 30% ของโซนเท่านั้น
+        // แรงขายจริงอยู่ที่ยอดโซน ก้นโซนยังมีแรงดูดขึ้นไปเติม gap อีกมาก
+        const zoneHeight = zone.top - zone.bottom;
+        const topThreshold = zone.top - (zoneHeight * 0.3);
+        const isInDepthZone = candle.high >= topThreshold;
+
+        if (isTouchOrSweepZone && isCloseInsideOrBelow && isBearishPA && isInDepthZone) {
+            return {
+                isValid: true,
+                direction: 'SELL',
                 triggerWickPrice: candle.low,
                 cancelPrice: zone.top,
                 paCandleLow: candle.low,
@@ -202,15 +214,20 @@ function checkPriceActionInZone(candle, zone) {
     return { isValid: false };
 }
 
-function checkChoCh(m5Candles, direction) {
+function checkChoCh(m5Candles, direction, paIndex = null) {
     if (m5Candles.length < 5) return { isValid: false };
 
     const paCandle = m5Candles[m5Candles.length - 1];
 
+    // [Timing Fix] จำกัดการค้นหา fractal เฉพาะช่วงหลัง PA candle
+    // ป้องกัน ChoCh ไปยืนยัน swing ที่ไม่เกี่ยวข้องกับ PA ปัจจุบัน
+    // paIndex + 1 = candle ที่เก่าสุดที่ยังอยู่ใน "swing context" เดียวกับ PA
+    const fractalFloor = paIndex !== null ? paIndex + 1 : 1;
+
     if (direction === 'BUY') {
         // หา Swing High (Fractal High) ล่าสุด → ใช้ Close ของแท่ง Fractal (Body-based BOS)
         let targetHigh = null;
-        for (let i = m5Candles.length - 2; i >= 1; i--) {
+        for (let i = m5Candles.length - 2; i >= fractalFloor; i--) {
             const c = m5Candles[i];
             if (c.high > m5Candles[i - 1].high &&
                 c.high > m5Candles[i + 1].high) {
@@ -218,13 +235,15 @@ function checkChoCh(m5Candles, direction) {
                 break;
             }
         }
-        // Fallback: หากไม่พบ Fractal High → ใช้ค่า Close สูงสุดย้อนหลัง 10 แท่ง
+        // Fallback: หากไม่พบ Fractal High → ใช้ body สูงสุดในช่วงหลัง PA
         if (targetHigh === null) {
-            const prevCandles = m5Candles.slice(-Math.min(11, m5Candles.length), -1);
+            const startIdx = paIndex !== null ? paIndex + 1 : 0;
+            const prevCandles = m5Candles.slice(startIdx, -1);
+            if (prevCandles.length === 0) return { isValid: false };
             targetHigh = Math.max(...prevCandles.map(c => Math.max(c.open, c.close)));
         }
-        
-        const breakMargin = 0.3;
+
+        const breakMargin = 1.5; // เพิ่มจาก 0.3 → 1.5 pts (Gold spread เฉลี่ย 0.3-0.5 pts → 0.3 คือ noise)
         const isValid = paCandle.close > (targetHigh + breakMargin);
         return { isValid, targetPrice: targetHigh, breakPrice: paCandle.close, margin: breakMargin };
     }
@@ -232,7 +251,7 @@ function checkChoCh(m5Candles, direction) {
     if (direction === 'SELL') {
         // หา Swing Low (Fractal Low) ล่าสุด → ใช้ Close ของแท่ง Fractal (Body-based BOS)
         let targetLow = null;
-        for (let i = m5Candles.length - 2; i >= 1; i--) {
+        for (let i = m5Candles.length - 2; i >= fractalFloor; i--) {
             const c = m5Candles[i];
             if (c.low < m5Candles[i - 1].low &&
                 c.low < m5Candles[i + 1].low) {
@@ -240,13 +259,15 @@ function checkChoCh(m5Candles, direction) {
                 break;
             }
         }
-        // Fallback: หากไม่พบ Fractal Low → ใช้ค่า Close ต่ำสุดย้อนหลัง 10 แท่ง
+        // Fallback: หากไม่พบ Fractal Low → ใช้ body ต่ำสุดในช่วงหลัง PA
         if (targetLow === null) {
-            const prevCandles = m5Candles.slice(-Math.min(11, m5Candles.length), -1);
+            const startIdx = paIndex !== null ? paIndex + 1 : 0;
+            const prevCandles = m5Candles.slice(startIdx, -1);
+            if (prevCandles.length === 0) return { isValid: false };
             targetLow = Math.min(...prevCandles.map(c => Math.min(c.open, c.close)));
         }
 
-        const breakMargin = 0.3;
+        const breakMargin = 1.5; // เพิ่มจาก 0.3 → 1.5 pts (Gold spread เฉลี่ย 0.3-0.5 pts → 0.3 คือ noise)
         const isValid = paCandle.close < (targetLow - breakMargin);
         return { isValid, targetPrice: targetLow, breakPrice: paCandle.close, margin: breakMargin };
     }
@@ -269,11 +290,11 @@ function getHTFTrend(h1Candles) {
     const group3 = last12.slice(8, 12);  // 4 ชม.ล่าสุด  (H4 ใหม่สุด)
 
     const high1 = Math.max(...group1.map(c => c.high));
-    const low1  = Math.min(...group1.map(c => c.low));
+    const low1 = Math.min(...group1.map(c => c.low));
     const high2 = Math.max(...group2.map(c => c.high));
-    const low2  = Math.min(...group2.map(c => c.low));
+    const low2 = Math.min(...group2.map(c => c.low));
     const high3 = Math.max(...group3.map(c => c.high));
-    const low3  = Math.min(...group3.map(c => c.low));
+    const low3 = Math.min(...group3.map(c => c.low));
 
     // Bullish: High และ Low ใหม่กว่าเดิมทุกช่วง (HH + HL)
     const isBullish = high3 > high2 && high2 > high1 && low3 > low2;
@@ -293,11 +314,11 @@ function getTradingRange(h1Candles, lookback = 24) {
     const lows = rangeCandles.map(c => c.low);
     const swingHigh = Math.max(...highs);
     const swingLow = Math.min(...lows);
-    
+
     // คำนวณหาค่ามัธยฐาน (Median) ของราคาปิด เพื่อป้องกันสัญญาณหลอกจากการสะบัดของราคา (Spike)
     const closes = rangeCandles.map(c => c.close).sort((a, b) => a - b);
     const midpoint = closes[Math.floor(closes.length / 2)];
-    
+
     return {
         high: swingHigh,
         low: swingLow,
@@ -314,7 +335,7 @@ function checkIDMSweep(m5Candles, direction) {
     if (direction === 'BUY') {
         let currentSwingLow = m5Candles[currentIndex].low;
         let currentSwingIndex = currentIndex;
-        
+
         for (let i = currentIndex; i >= Math.max(0, currentIndex - 10); i--) {
             if (m5Candles[i].low <= currentSwingLow) {
                 currentSwingLow = m5Candles[i].low;
@@ -341,7 +362,7 @@ function checkIDMSweep(m5Candles, direction) {
     if (direction === 'SELL') {
         let currentSwingHigh = m5Candles[currentIndex].high;
         let currentSwingIndex = currentIndex;
-        
+
         for (let i = currentIndex; i >= Math.max(0, currentIndex - 10); i--) {
             if (m5Candles[i].high >= currentSwingHigh) {
                 currentSwingHigh = m5Candles[i].high;
@@ -374,8 +395,9 @@ function checkRecentPA(m5Candles, zone, lookback = 10) {
     for (let i = m5Candles.length - 1; i >= Math.max(0, m5Candles.length - lookback); i--) {
         const paResult = checkPriceActionInZone(m5Candles[i], zone);
         if (paResult.isValid) {
-            // เจอ PA ที่ไหน คืนค่าของแท่งนั้นกลับไปใช้เป็นจุดอ้างอิง SL ทันที
-            return paResult;
+            // คืน candleIndex ไปด้วยเพื่อให้ checkChoCh ใช้เป็น anchor
+            // (ป้องกัน ChoCh ยืนยันด้วย candle จาก swing อื่นที่ไม่เกี่ยวกับ PA นี้)
+            return { ...paResult, candleIndex: i };
         }
     }
     return { isValid: false };

@@ -195,12 +195,12 @@ async function checkMarketLogic() {
 
                         // [IDM + ChoCh] ต้องผ่านทั้งคู่ (AND) ตามหลัก SMC: กวาด Liquidity ก่อน → โครงสร้างเสียทรงยืนยัน
                         const hasIDM = checkIDMSweep(closedM5Array, paResult.direction);
-                        const chochResult = checkChoCh(closedM5Array, paResult.direction);
+                        const chochResult = checkChoCh(closedM5Array, paResult.direction, paResult.candleIndex);
                         const hasChoCh = chochResult.isValid;
 
                         console.log(`   🔎 [IDM]: ${hasIDM ? '✅ พบ Liquidity Sweep' : '❌ ไม่พบ'} | [ChoCh]: ${hasChoCh ? '✅ โครงสร้างเสียทรง' : '❌ ยังไม่เสียทรง'}`);
                         if (hasChoCh && chochResult.targetPrice) {
-                            console.log(`      ↳ 📈 [ChoCh Detail]: ทะลุเป้า ${chochResult.targetPrice.toFixed(2)} ด้วยราคาปิด ${chochResult.breakPrice.toFixed(2)} (Margin: 0.3)`);
+                            console.log(`      ↳ 📈 [ChoCh Detail]: ทะลุเป้า ${chochResult.targetPrice.toFixed(2)} ด้วยราคาปิด ${chochResult.breakPrice.toFixed(2)} (Margin: ${chochResult.margin})`);
                         }
 
                         if (hasIDM && hasChoCh) {
