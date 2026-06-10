@@ -105,11 +105,19 @@ async function checkMarketLogic() {
 
             const closedH1Candles = cachedH1Candles.slice(0, -1);
 
-            // กรองหาเฉพาะโซนที่สดใหม่ย้อนหลังไม่เกินอายุที่กำหนด (เช่น MAX_ZONE_AGE_HOURS = 24)
-            const candlesToScan = closedH1Candles.slice(-ENGINE_CONFIG.MAX_ZONE_AGE_HOURS);
-            const fvgs = findFVG(candlesToScan, m5Candles);
-            const obs = findOrderBlock(candlesToScan, m5Candles);
-            const allZones = [...fvgs, ...obs];
+            // ค้นหาโซนทั้งหมดก่อน
+            const fvgs = findFVG(closedH1Candles, m5Candles);
+            const obs = findOrderBlock(closedH1Candles, m5Candles);
+            const allFoundZones = [...fvgs, ...obs];
+
+            // กรองหาเฉพาะโซนที่สดใหม่ย้อนหลังไม่เกินอายุที่กำหนด (ใช้ Timestamp จริง อิงจากแท่งล่าสุดแก้ปัญหาเสาร์อาทิตย์)
+            const latestH1TimeMs = new Date(closedH1Candles[closedH1Candles.length - 1].time).getTime();
+            const maxAgeMs = ENGINE_CONFIG.MAX_ZONE_AGE_HOURS * 60 * 60 * 1000;
+            const allZones = allFoundZones.filter(z => {
+                if (!z.time) return true;
+                const zoneTimeMs = new Date(z.time).getTime();
+                return (latestH1TimeMs - zoneTimeMs) <= maxAgeMs;
+            });
 
             // [HTF Filter] คำนวณทิศทาง H4 จาก H1 ที่มีอยู่แล้ว ไม่ใช้ API เพิ่ม
             const htfTrend = getHTFTrend(closedH1Candles);
@@ -186,8 +194,8 @@ async function checkMarketLogic() {
                         continue;
                     }
 
-                    // [NEW] เช็คหา PA ที่เกิดขึ้นในช่วง 10 แท่งล่าสุดในโซน (เพื่อไม่ให้พลาดจังหวะการสะสมกำลังก่อนเบรค ChoCh)
-                    const paResult = checkRecentPA(closedM5Array, zone, 10);
+                    // [NEW] เช็คหา PA ที่เกิดขึ้นในช่วง 30 แท่งล่าสุดในโซน (เพื่อไม่ให้พลาดจังหวะการสะสมกำลังก่อนเบรค ChoCh)
+                    const paResult = checkRecentPA(closedM5Array, zone, 30);
 
                     if (paResult.isValid) {
                         // [Zone Violation Check] ตรวจสอบว่าโซนถูกทำลายไปแล้วหรือยัง (ราคาปิดทะลุโซน)

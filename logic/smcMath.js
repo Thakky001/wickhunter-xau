@@ -1,11 +1,18 @@
 function findFVG(candles, m5Candles = []) {
     let fvgs = [];
+    const H1_MIN_ZONE_SIZE = 1.5;
+    const H1_MIN_DISPLACEMENT = 3.0;
+
     for (let i = 2; i < candles.length; i++) {
         const c1 = candles[i - 2];
+        const c2 = candles[i - 1];
         const c3 = candles[i];
 
+        const c2Body = Math.abs(c2.open - c2.close);
+        const hasDisplacement = c2Body >= H1_MIN_DISPLACEMENT;
+
         // Bullish FVG (Gap ขาขึ้น / โซน Buy)
-        if (c3.low > c1.high) {
+        if (c3.low > c1.high && (c3.low - c1.high) >= H1_MIN_ZONE_SIZE && hasDisplacement && c2.close > c2.open) {
             // [Strict Mitigation] โซนถูกใช้ไปแล้วถ้าราคากลับลงมาทะลุขอบล่าง (c1.high)
             let isMitigated = false;
             // [Mitigation Fix] วัดที่ราคาปิด (Body) ไม่ใช่ปลายไส้
@@ -33,12 +40,13 @@ function findFVG(candles, m5Candles = []) {
                     type: 'BUY_ZONE',
                     name: 'BULLISH_FVG',
                     top: c3.low,
-                    bottom: c1.high // ขอบล่างของโซน
+                    bottom: c1.high, // ขอบล่างของโซน
+                    time: c1.time
                 });
             }
         }
         // Bearish FVG (Gap ขาลง / โซน Sell)
-        else if (c3.high < c1.low) {
+        else if (c3.high < c1.low && (c1.low - c3.high) >= H1_MIN_ZONE_SIZE && hasDisplacement && c2.close < c2.open) {
             // [Strict Mitigation] โซนถูกใช้ไปแล้วถ้าราคากลับขึ้นมาแตะ top (c1.low)
             let isMitigated = false;
             // [Mitigation Fix] วัดที่ราคาปิด (Body) ไม่ใช่ปลายไส้
@@ -64,7 +72,8 @@ function findFVG(candles, m5Candles = []) {
                     type: 'SELL_ZONE',
                     name: 'BEARISH_FVG',
                     top: c1.low,
-                    bottom: c3.high
+                    bottom: c3.high,
+                    time: c1.time
                 });
             }
         }
@@ -86,6 +95,27 @@ function findOrderBlock(candles, m5Candles = []) {
 
         // Bullish OB (โซน Buy): แท่งแดงสุดท้าย ก่อนแท่งเขียวพุ่งทะลุ High เดิม
         if (isPrevBearish && isCurrBullish && curr.close > prev.high) {
+            // [BOS Check] ย้อนกลับไปหา Swing High ในช่วง 10 แท่งก่อนหน้า แล้วเช็คว่าคลื่นที่เกิดจาก OB นี้ทะลุไปได้ไหม
+            let localHigh = null;
+            for (let b = Math.max(0, i - 10); b < i - 1; b++) {
+                if (localHigh === null || candles[b].high > localHigh) {
+                    localHigh = candles[b].high;
+                }
+            }
+            
+            let hasBOS = false;
+            if (localHigh === null || curr.close > localHigh) {
+                hasBOS = true;
+            } else {
+                for (let k = i + 1; k < Math.min(candles.length, i + 10); k++) {
+                    if (candles[k].close > localHigh) {
+                        hasBOS = true;
+                        break;
+                    }
+                }
+            }
+            if (!hasBOS) continue;
+
             // [Strict Mitigation] โซนถูกใช้ไปแล้วถ้าราคาทะลุลงต่ำกว่า bottom (prev.low)
             let isMitigated = false;
             // [Mitigation Fix] วัดที่ราคาปิด (Body) ไม่ใช่ปลายไส้
@@ -112,11 +142,33 @@ function findOrderBlock(candles, m5Candles = []) {
                     name: 'BULLISH_OB',
                     top: prev.high,
                     bottom: prev.low,
+                    time: prev.time
                 });
             }
         }
         // Bearish OB (โซน Sell): แท่งเขียวสุดท้าย ก่อนแท่งแดงเทขายรุนแรง
         else if (isPrevBullish && isCurrBearish && curr.close < prev.low) {
+            // [BOS Check] ย้อนกลับไปหา Swing Low ในช่วง 10 แท่งก่อนหน้า แล้วเช็คว่าคลื่นที่เกิดจาก OB นี้ทะลุลงไปได้ไหม
+            let localLow = null;
+            for (let b = Math.max(0, i - 10); b < i - 1; b++) {
+                if (localLow === null || candles[b].low < localLow) {
+                    localLow = candles[b].low;
+                }
+            }
+            
+            let hasBOS = false;
+            if (localLow === null || curr.close < localLow) {
+                hasBOS = true;
+            } else {
+                for (let k = i + 1; k < Math.min(candles.length, i + 10); k++) {
+                    if (candles[k].close < localLow) {
+                        hasBOS = true;
+                        break;
+                    }
+                }
+            }
+            if (!hasBOS) continue;
+
             // [Strict Mitigation] โซนถูกใช้ไปแล้วถ้าราคากลับขึ้นมาทะลุ top (prev.high)
             let isMitigated = false;
             // [Mitigation Fix] วัดที่ราคาปิด (Body) ไม่ใช่ปลายไส้
@@ -143,6 +195,7 @@ function findOrderBlock(candles, m5Candles = []) {
                     name: 'BEARISH_OB',
                     top: prev.high,
                     bottom: prev.low,
+                    time: prev.time
                 });
             }
         }
@@ -293,27 +346,24 @@ function checkChoCh(m5Candles, direction, paIndex = null) {
 // วิเคราะห์แนวโน้ม H4 จากข้อมูล H1 ที่มีอยู่แล้ว (ไม่ใช้ API เพิ่มแม้แต่ครั้งเดียว)
 // เปรียบเทียบโครงสร้าง HH/HL (Bullish) กับ LH/LL (Bearish) ใน 3 กลุ่ม H4
 function getHTFTrend(h1Candles) {
-    // ต้องการ 12 แท่ง H1 ขึ้นไป (≈ 3 แท่ง H4) เพื่อประเมินแนวโน้ม
-    if (h1Candles.length < 12) return 'NEUTRAL';
+    // ต้องการ 20 แท่ง H1 ขึ้นไป (≈ 5 แท่ง H4) เพื่อประเมินแนวโน้ม
+    if (h1Candles.length < 20) return 'NEUTRAL';
 
-    const last12 = h1Candles.slice(-12);
+    const last20 = h1Candles.slice(-20);
 
     // จำลองแท่ง H4 จาก H1 (กลุ่มละ 4 แท่ง)
-    const group1 = last12.slice(0, 4);   // 12-8 ชม.ก่อน (H4 เก่าสุด)
-    const group2 = last12.slice(4, 8);   // 8-4 ชม.ก่อน  (H4 กลาง)
-    const group3 = last12.slice(8, 12);  // 4 ชม.ล่าสุด  (H4 ใหม่สุด)
+    const groups = [];
+    for (let i = 0; i < 5; i++) {
+        groups.push(last20.slice(i * 4, (i + 1) * 4));
+    }
 
-    const high1 = Math.max(...group1.map(c => c.high));
-    const low1 = Math.min(...group1.map(c => c.low));
-    const high2 = Math.max(...group2.map(c => c.high));
-    const low2 = Math.min(...group2.map(c => c.low));
-    const high3 = Math.max(...group3.map(c => c.high));
-    const low3 = Math.min(...group3.map(c => c.low));
+    const highs = groups.map(g => Math.max(...g.map(c => c.high)));
+    const lows = groups.map(g => Math.min(...g.map(c => c.low)));
 
-    // Bullish: High และ Low ใหม่กว่าเดิมทุกช่วง (HH + HL)
-    const isBullish = high3 > high2 && high2 > high1 && low3 > low2;
-    // Bearish: High และ Low ต่ำกว่าเดิมทุกช่วง (LH + LL)
-    const isBearish = high3 < high2 && high2 < high1 && low3 < low2;
+    // Bullish: High ล่าสุดสูงกว่ากลุ่มก่อนหน้า และ Low ยกสูงขึ้น
+    const isBullish = highs[4] > highs[3] && highs[3] > highs[2] && lows[4] > lows[3];
+    // Bearish: High ล่าสุดต่ำกว่ากลุ่มก่อนหน้า และ Low ทำนิวโลว์
+    const isBearish = lows[4] < lows[3] && lows[3] < lows[2] && highs[4] < highs[3];
 
     if (isBullish) return 'BULLISH';
     if (isBearish) return 'BEARISH';
@@ -324,10 +374,10 @@ function getHTFTrend(h1Candles) {
 function getTradingRange(h1Candles, lookback = 24) {
     if (h1Candles.length === 0) return null;
     const rangeCandles = h1Candles.slice(-Math.min(lookback, h1Candles.length));
-    const highs = rangeCandles.map(c => c.high);
-    const lows = rangeCandles.map(c => c.low);
-    const swingHigh = Math.max(...highs);
-    const swingLow = Math.min(...lows);
+    const bodyHighs = rangeCandles.map(c => Math.max(c.open, c.close));
+    const bodyLows = rangeCandles.map(c => Math.min(c.open, c.close));
+    const swingHigh = Math.max(...bodyHighs);
+    const swingLow = Math.min(...bodyLows);
 
     // คำนวณหาค่ามัธยฐาน (Median) ของราคาปิด เพื่อป้องกันสัญญาณหลอกจากการสะบัดของราคา (Spike)
     const closes = rangeCandles.map(c => c.close).sort((a, b) => a - b);
