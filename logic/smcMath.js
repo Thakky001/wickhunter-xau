@@ -122,8 +122,9 @@ function findOrderBlock(candles, m5Candles = []) {
             if (hasBOS) {
                 // [Body-based Mitigation] โซนตายเมื่อแท่งเทียน "ปิดทะลุ (Body Close)" ขอบล่าง
                 let isMitigated = false;
+                const obBottom = Math.min(prev.open, prev.close);
                 for (let j = i + 1; j < candles.length; j++) {
-                    if (Math.min(candles[j].open, candles[j].close) < prev.low) {
+                    if (Math.min(candles[j].open, candles[j].close) < obBottom) {
                         isMitigated = true;
                         break;
                     }
@@ -132,7 +133,7 @@ function findOrderBlock(candles, m5Candles = []) {
                 // เช็กการทำลายโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
                 if (!isMitigated && m5Candles.length > 0) {
                     for (let k = 0; k < m5Candles.length; k++) {
-                        if (m5Candles[k].time > curr.time && Math.min(m5Candles[k].open, m5Candles[k].close) < prev.low) {
+                        if (m5Candles[k].time > curr.time && Math.min(m5Candles[k].open, m5Candles[k].close) < obBottom) {
                             isMitigated = true;
                             break;
                         }
@@ -177,8 +178,9 @@ function findOrderBlock(candles, m5Candles = []) {
             if (hasBOS) {
                 // [Body-based Mitigation] โซนตายเมื่อแท่งเทียน "ปิดทะลุ (Body Close)" ขอบบน
                 let isMitigated = false;
+                const obTop = Math.max(prev.open, prev.close);
                 for (let j = i + 1; j < candles.length; j++) {
-                    if (Math.max(candles[j].open, candles[j].close) > prev.high) {
+                    if (Math.max(candles[j].open, candles[j].close) > obTop) {
                         isMitigated = true;
                         break;
                     }
@@ -187,7 +189,7 @@ function findOrderBlock(candles, m5Candles = []) {
                 // เช็กการทำลายโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
                 if (!isMitigated && m5Candles.length > 0) {
                     for (let k = 0; k < m5Candles.length; k++) {
-                        if (m5Candles[k].time > curr.time && Math.max(m5Candles[k].open, m5Candles[k].close) > prev.high) {
+                        if (m5Candles[k].time > curr.time && Math.max(m5Candles[k].open, m5Candles[k].close) > obTop) {
                             isMitigated = true;
                             break;
                         }
