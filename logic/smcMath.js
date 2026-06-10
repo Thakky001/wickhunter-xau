@@ -1,3 +1,8 @@
+const MATH_CONFIG = {
+    MIN_CANDLE_SIZE: 1.5,       // กรอง Micro-wicks ขนาดแท่ง M5 ต้องกว้างไม่ต่ำกว่า 1.5 USD (150 จุด)
+    BOS_CONFIRM_WINDOW: 25      // [Fix#3] เพิ่มจาก 10 → 25 แท่ง H1 รองรับ inter-session gap สูงสุด ~20h บน Gold
+};
+
 function findFVG(candles, m5Candles = []) {
     let fvgs = [];
     const H1_MIN_ZONE_SIZE = 1.5;
@@ -13,12 +18,11 @@ function findFVG(candles, m5Candles = []) {
 
         // Bullish FVG (Gap ขาขึ้น / โซน Buy)
         if (c3.low > c1.high && (c3.low - c1.high) >= H1_MIN_ZONE_SIZE && hasDisplacement && c2.close > c2.open) {
-            // [Strict Mitigation] โซนถูกใช้ไปแล้วถ้าราคากลับลงมาทะลุขอบล่าง (c1.high)
+            // [CE Mitigation] โซนถูกใช้ไปแล้วถ้าราคา (Body) ปิดทะลุ 50% ของช่องว่าง
             let isMitigated = false;
-            // [Mitigation Fix] วัดที่ราคาปิด (Body) ไม่ใช่ปลายไส้
+            const midpoint = (c1.high + c3.low) / 2;
             for (let j = i + 1; j < candles.length; j++) {
-                // ✅ แก้เป็น c1.high แล้ว
-                if (Math.min(candles[j].open, candles[j].close) <= c1.high) {
+                if (Math.min(candles[j].open, candles[j].close) <= midpoint) {
                     isMitigated = true;
                     break;
                 }
@@ -27,8 +31,7 @@ function findFVG(candles, m5Candles = []) {
             // เช็กการทำลายโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
             if (!isMitigated && m5Candles.length > 0) {
                 for (let k = 0; k < m5Candles.length; k++) {
-                    // ✅ แก้เป็น c1.high แล้ว
-                    if (m5Candles[k].time >= c3.time && Math.min(m5Candles[k].open, m5Candles[k].close) <= c1.high) {
+                    if (m5Candles[k].time >= c3.time && Math.min(m5Candles[k].open, m5Candles[k].close) <= midpoint) {
                         isMitigated = true;
                         break;
                     }
@@ -47,11 +50,11 @@ function findFVG(candles, m5Candles = []) {
         }
         // Bearish FVG (Gap ขาลง / โซน Sell)
         else if (c3.high < c1.low && (c1.low - c3.high) >= H1_MIN_ZONE_SIZE && hasDisplacement && c2.close < c2.open) {
-            // [Strict Mitigation] โซนถูกใช้ไปแล้วถ้าราคากลับขึ้นมาแตะ top (c1.low)
+            // [CE Mitigation] โซนถูกใช้ไปแล้วถ้าราคา (Body) ปิดทะลุ 50% ของช่องว่าง
             let isMitigated = false;
-            // [Mitigation Fix] วัดที่ราคาปิด (Body) ไม่ใช่ปลายไส้
+            const midpoint = (c1.low + c3.high) / 2;
             for (let j = i + 1; j < candles.length; j++) {
-                if (Math.max(candles[j].open, candles[j].close) >= c1.low) {
+                if (Math.max(candles[j].open, candles[j].close) >= midpoint) {
                     isMitigated = true;
                     break;
                 }
@@ -60,7 +63,7 @@ function findFVG(candles, m5Candles = []) {
             // เช็กการทำลายโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
             if (!isMitigated && m5Candles.length > 0) {
                 for (let k = 0; k < m5Candles.length; k++) {
-                    if (m5Candles[k].time >= c3.time && Math.max(m5Candles[k].open, m5Candles[k].close) >= c1.low) {
+                    if (m5Candles[k].time >= c3.time && Math.max(m5Candles[k].open, m5Candles[k].close) >= midpoint) {
                         isMitigated = true;
                         break;
                     }
@@ -103,18 +106,19 @@ function findOrderBlock(candles, m5Candles = []) {
                     break;
                 }
             }
-            
+
             if (fractalHigh === null) continue;
-            
+
             // เช็คว่ามีแท่งไหนหลังจาก OB ที่ปิดสูงกว่า fractalHigh ไหม
+            // [Fix#3] ขยาย window เป็น BOS_CONFIRM_WINDOW (25 H1) รองรับ inter-session gap บน Gold
             let hasBOS = false;
-            for (let k = i; k < Math.min(candles.length, i + 10); k++) {
+            for (let k = i; k < Math.min(candles.length, i + MATH_CONFIG.BOS_CONFIRM_WINDOW); k++) {
                 if (candles[k].close > fractalHigh) {
                     hasBOS = true;
                     break;
                 }
             }
-            
+
             if (hasBOS) {
                 // [Body-based Mitigation] โซนตายเมื่อแท่งเทียน "ปิดทะลุ (Body Close)" ขอบล่าง
                 let isMitigated = false;
@@ -139,14 +143,14 @@ function findOrderBlock(candles, m5Candles = []) {
                     orderBlocks.push({
                         type: 'BUY_ZONE',
                         name: 'BULLISH_OB',
-                        top: prev.high,
-                        bottom: prev.low,
+                        top: Math.max(prev.open, prev.close),
+                        bottom: Math.min(prev.open, prev.close),
                         time: prev.time
                     });
                 }
             }
         }
-        
+
         // Bearish OB (โซน Sell): แท่งเขียวสุดท้าย ก่อนแท่งแดง (Impulse)
         else if (isPrevBullish && isCurrBearish) {
             // [BOS Check] หา 3-point Fractal Low ก่อนหน้า OB
@@ -157,18 +161,19 @@ function findOrderBlock(candles, m5Candles = []) {
                     break;
                 }
             }
-            
+
             if (fractalLow === null) continue;
-            
+
             // เช็คว่ามีแท่งไหนหลังจาก OB ที่ปิดต่ำกว่า fractalLow ไหม
+            // [Fix#3] ขยาย window เป็น BOS_CONFIRM_WINDOW (25 H1) รองรับ inter-session gap บน Gold
             let hasBOS = false;
-            for (let k = i; k < Math.min(candles.length, i + 10); k++) {
+            for (let k = i; k < Math.min(candles.length, i + MATH_CONFIG.BOS_CONFIRM_WINDOW); k++) {
                 if (candles[k].close < fractalLow) {
                     hasBOS = true;
                     break;
                 }
             }
-            
+
             if (hasBOS) {
                 // [Body-based Mitigation] โซนตายเมื่อแท่งเทียน "ปิดทะลุ (Body Close)" ขอบบน
                 let isMitigated = false;
@@ -193,8 +198,8 @@ function findOrderBlock(candles, m5Candles = []) {
                     orderBlocks.push({
                         type: 'SELL_ZONE',
                         name: 'BEARISH_OB',
-                        top: prev.high,
-                        bottom: prev.low,
+                        top: Math.max(prev.open, prev.close),
+                        bottom: Math.min(prev.open, prev.close),
                         time: prev.time
                     });
                 }
@@ -204,9 +209,7 @@ function findOrderBlock(candles, m5Candles = []) {
     return orderBlocks;
 }
 
-const MATH_CONFIG = {
-    MIN_CANDLE_SIZE: 1.5 // กรอง Micro-wicks ขนาดแท่ง M5 ต้องกว้างไม่ต่ำกว่า 1.5 USD (150 จุด)
-};
+
 
 function checkPriceActionInZone(candle, zone) {
     const totalLength = candle.high - candle.low;
@@ -277,9 +280,6 @@ function checkPriceActionInZone(candle, zone) {
 function checkChoCh(m5Candles, direction, paIndex = null) {
     if (m5Candles.length < 5) return { isValid: false };
 
-    const paCandle = m5Candles[m5Candles.length - 1];
-    const prevCandle = m5Candles[m5Candles.length - 2];
-
     if (direction === 'BUY') {
         let targetHigh = null;
         if (paIndex !== null && paIndex > 1) {
@@ -292,7 +292,7 @@ function checkChoCh(m5Candles, direction, paIndex = null) {
                 }
             }
         }
-        
+
         // Fallback: ถ้าหา Fractal ไม่เจอ ให้เอาราคาไส้เทียนสูงสุดในช่วง 20 แท่งก่อน PA
         if (targetHigh === null) {
             const searchEnd = paIndex !== null ? paIndex : m5Candles.length - 1;
@@ -303,11 +303,23 @@ function checkChoCh(m5Candles, direction, paIndex = null) {
         }
 
         const breakMargin = 1.5; // เพิ่มจาก 0.3 → 1.5 pts (Gold spread เฉลี่ย 0.3-0.5 pts → 0.3 คือ noise)
-        // [Fresh Break Fix] แท่งก่อนหน้าต้องยังไม่ทะลุ Margin และแท่งปัจจุบันทะลุรวดเดียว
-        const isFreshBreak = prevCandle.close <= (targetHigh + breakMargin) && paCandle.close > (targetHigh + breakMargin);
+
+        // [Fresh Break Fix] ค้นหาการเบรคในช่วง Valid Window (10 แท่งหลังเกิด PA)
+        let isFreshBreak = false;
+        let breakPrice = null;
+        const startIndex = paIndex !== null ? paIndex : m5Candles.length - 2;
+
+        for (let i = startIndex + 1; i < Math.min(m5Candles.length, startIndex + 10); i++) {
+            if (m5Candles[i - 1].close <= (targetHigh + breakMargin) && m5Candles[i].close > (targetHigh + breakMargin)) {
+                isFreshBreak = true;
+                breakPrice = m5Candles[i].close;
+                break;
+            }
+        }
+
         if (!isFreshBreak) return { isValid: false, targetPrice: targetHigh, margin: breakMargin };
 
-        return { isValid: true, targetPrice: targetHigh, breakPrice: paCandle.close, margin: breakMargin };
+        return { isValid: true, targetPrice: targetHigh, breakPrice: breakPrice, margin: breakMargin };
     }
 
     if (direction === 'SELL') {
@@ -322,7 +334,7 @@ function checkChoCh(m5Candles, direction, paIndex = null) {
                 }
             }
         }
-        
+
         // Fallback: ถ้าหา Fractal ไม่เจอ ให้เอาราคาไส้เทียนต่ำสุดในช่วง 20 แท่งก่อน PA
         if (targetLow === null) {
             const searchEnd = paIndex !== null ? paIndex : m5Candles.length - 1;
@@ -333,11 +345,23 @@ function checkChoCh(m5Candles, direction, paIndex = null) {
         }
 
         const breakMargin = 1.5; // เพิ่มจาก 0.3 → 1.5 pts (Gold spread เฉลี่ย 0.3-0.5 pts → 0.3 คือ noise)
-        // [Fresh Break Fix] แท่งก่อนหน้าต้องยังไม่ทะลุ Margin และแท่งปัจจุบันทะลุรวดเดียว
-        const isFreshBreak = prevCandle.close >= (targetLow - breakMargin) && paCandle.close < (targetLow - breakMargin);
+
+        // [Fresh Break Fix] ค้นหาการเบรคในช่วง Valid Window (10 แท่งหลังเกิด PA)
+        let isFreshBreak = false;
+        let breakPrice = null;
+        const startIndex = paIndex !== null ? paIndex : m5Candles.length - 2;
+
+        for (let i = startIndex + 1; i < Math.min(m5Candles.length, startIndex + 10); i++) {
+            if (m5Candles[i - 1].close >= (targetLow - breakMargin) && m5Candles[i].close < (targetLow - breakMargin)) {
+                isFreshBreak = true;
+                breakPrice = m5Candles[i].close;
+                break;
+            }
+        }
+
         if (!isFreshBreak) return { isValid: false, targetPrice: targetLow, margin: breakMargin };
 
-        return { isValid: true, targetPrice: targetLow, breakPrice: paCandle.close, margin: breakMargin };
+        return { isValid: true, targetPrice: targetLow, breakPrice: breakPrice, margin: breakMargin };
     }
 
     return { isValid: false };
@@ -405,7 +429,7 @@ function checkIDMSweep(m5Candles, direction, paIndex = null) {
         let currentSwingIndex = currentIndex;
 
         for (let i = currentIndex; i >= Math.max(0, currentIndex - 10); i--) {
-            if (m5Candles[i].low <= currentSwingLow) {
+            if (m5Candles[i].low < currentSwingLow) {
                 currentSwingLow = m5Candles[i].low;
                 currentSwingIndex = i;
             }
@@ -431,7 +455,7 @@ function checkIDMSweep(m5Candles, direction, paIndex = null) {
         let currentSwingIndex = currentIndex;
 
         for (let i = currentIndex; i >= Math.max(0, currentIndex - 10); i--) {
-            if (m5Candles[i].high >= currentSwingHigh) {
+            if (m5Candles[i].high > currentSwingHigh) {
                 currentSwingHigh = m5Candles[i].high;
                 currentSwingIndex = i;
             }
