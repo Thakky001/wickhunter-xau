@@ -88,11 +88,20 @@ async function checkMarketLogic() {
 
         if (currentState === STATES.SCANNING) {
             const currentHour = new Date().getUTCHours();
-            if (cachedH1Candles.length === 0 || currentHour !== lastH1FetchHour) {
+            const currentMinute = new Date().getUTCMinutes();
+
+            // [API Fix] หน่วงเวลา 2 นาที เพื่อให้ Server อัปเดตแท่ง H1 ล่าสุดจนเสร็จสมบูรณ์ก่อนดึง
+            if (cachedH1Candles.length === 0) {
                 cachedH1Candles = await getCandles('60', 100); // ดึง 100 แท่ง H1 = ~4 วัน (รองรับ MAX_ZONE_AGE_HOURS: 72)
+                lastH1FetchHour = currentMinute < 2 ? -1 : currentHour; // ถ้าดึงตอนต้นชั่วโมง ให้บังคับดึงซ้ำอีกทีตอนนาทีที่ 2
+                if (cachedH1Candles.length > 0) {
+                    console.log(`🔄 [SMC Engine]: โหลดข้อมูลแท่งเทียน H1 เริ่มต้นสำเร็จ`);
+                }
+            } else if (currentHour !== lastH1FetchHour && currentMinute >= 2) {
+                cachedH1Candles = await getCandles('60', 100);
                 lastH1FetchHour = currentHour;
                 if (cachedH1Candles.length > 0) {
-                    console.log(`🔄 [SMC Engine]: อัปเดตข้อมูลแท่งเทียน H1 ใหม่ (ชั่วโมงที่ ${currentHour})`);
+                    console.log(`🔄 [SMC Engine]: อัปเดตข้อมูลแท่งเทียน H1 ใหม่ (ชั่วโมงที่ ${currentHour} นาทีที่ ${currentMinute})`);
                 }
             }
 
