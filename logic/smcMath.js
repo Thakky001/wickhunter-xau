@@ -93,110 +93,129 @@ function findOrderBlock(candles, m5Candles = []) {
         const isPrevBullish = prev.close > prev.open;
         const isCurrBearish = curr.close < curr.open;
 
-        // Bullish OB (โซน Buy): แท่งแดงสุดท้าย ก่อนแท่งเขียวพุ่งทะลุ High เดิม
-        if (isPrevBearish && isCurrBullish && curr.close > prev.high) {
-            // [BOS Check] ย้อนกลับไปหา Swing High ในช่วง 10 แท่งก่อนหน้า แล้วเช็คว่าคลื่นที่เกิดจาก OB นี้ทะลุไปได้ไหม
-            let localHigh = null;
-            for (let b = Math.max(0, i - 10); b < i - 1; b++) {
-                if (localHigh === null || candles[b].high > localHigh) {
-                    localHigh = candles[b].high;
-                }
-            }
-            
-            let hasBOS = false;
-            if (localHigh === null || curr.close > localHigh) {
-                hasBOS = true;
-            } else {
-                for (let k = i + 1; k < Math.min(candles.length, i + 10); k++) {
-                    if (candles[k].close > localHigh) {
-                        hasBOS = true;
-                        break;
-                    }
-                }
-            }
-            if (!hasBOS) continue;
-
-            // [Strict Mitigation] โซนถูกใช้ไปแล้วถ้าราคาทะลุลงต่ำกว่า bottom (prev.low)
-            let isMitigated = false;
-            // [Mitigation Fix] วัดที่ราคาปิด (Body) ไม่ใช่ปลายไส้
-            for (let j = i + 1; j < candles.length; j++) {
-                if (Math.min(candles[j].open, candles[j].close) <= prev.low) {
-                    isMitigated = true;
+        // Bullish OB (โซน Buy): แท่งแดงสุดท้าย ก่อนแท่งเขียว (Impulse)
+        if (isPrevBearish && isCurrBullish) {
+            // [BOS Check] หา 3-point Fractal High ก่อนหน้า OB
+            let fractalHigh = null;
+            for (let b = i - 2; b >= Math.max(1, i - 15); b--) {
+                if (candles[b].high > candles[b - 1].high && candles[b].high > candles[b + 1].high) {
+                    fractalHigh = candles[b].high;
                     break;
                 }
             }
-
-            // เช็กการทำลายโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
-            if (!isMitigated && m5Candles.length > 0) {
-                for (let k = 0; k < m5Candles.length; k++) {
-                    if (m5Candles[k].time >= curr.time && Math.min(m5Candles[k].open, m5Candles[k].close) <= prev.low) {
-                        isMitigated = true;
-                        break;
-                    }
+            
+            if (fractalHigh === null) continue;
+            
+            // เช็คว่ามีแท่งไหนหลังจาก OB ที่ปิดสูงกว่า fractalHigh ไหม
+            let hasBOS = false;
+            for (let k = i; k < Math.min(candles.length, i + 10); k++) {
+                if (candles[k].close > fractalHigh) {
+                    hasBOS = true;
+                    break;
                 }
             }
+            
+            if (hasBOS) {
+                // [Strict Tap Mitigation] โซนถูกแตะแล้ว (Mitigated) ถ้าราคาลงมาแตะขอบบน (prev.high)
+                let isMitigated = false;
+                for (let j = i; j < candles.length; j++) {
+                    if (j === i) {
+                        // แท่งแรกของ impulse ห้ามทะลุลงขอบล่าง
+                        if (candles[j].low < prev.low) {
+                            isMitigated = true;
+                            break;
+                        }
+                    } else {
+                        // แท่งถัดๆ ไป ถ้าลงมาแตะขอบบน ถือว่าใช้ไปแล้ว
+                        if (candles[j].low <= prev.high) {
+                            isMitigated = true;
+                            break;
+                        }
+                    }
+                }
 
-            if (!isMitigated) {
-                orderBlocks.push({
-                    type: 'BUY_ZONE',
-                    name: 'BULLISH_OB',
-                    top: prev.high,
-                    bottom: prev.low,
-                    time: prev.time
-                });
+                // เช็กการแตะโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
+                if (!isMitigated && m5Candles.length > 0) {
+                    for (let k = 0; k < m5Candles.length; k++) {
+                        if (m5Candles[k].time > curr.time && m5Candles[k].low <= prev.high) {
+                            isMitigated = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!isMitigated) {
+                    orderBlocks.push({
+                        type: 'BUY_ZONE',
+                        name: 'BULLISH_OB',
+                        top: prev.high,
+                        bottom: prev.low,
+                        time: prev.time
+                    });
+                }
             }
         }
-        // Bearish OB (โซน Sell): แท่งเขียวสุดท้าย ก่อนแท่งแดงเทขายรุนแรง
-        else if (isPrevBullish && isCurrBearish && curr.close < prev.low) {
-            // [BOS Check] ย้อนกลับไปหา Swing Low ในช่วง 10 แท่งก่อนหน้า แล้วเช็คว่าคลื่นที่เกิดจาก OB นี้ทะลุลงไปได้ไหม
-            let localLow = null;
-            for (let b = Math.max(0, i - 10); b < i - 1; b++) {
-                if (localLow === null || candles[b].low < localLow) {
-                    localLow = candles[b].low;
-                }
-            }
-            
-            let hasBOS = false;
-            if (localLow === null || curr.close < localLow) {
-                hasBOS = true;
-            } else {
-                for (let k = i + 1; k < Math.min(candles.length, i + 10); k++) {
-                    if (candles[k].close < localLow) {
-                        hasBOS = true;
-                        break;
-                    }
-                }
-            }
-            if (!hasBOS) continue;
-
-            // [Strict Mitigation] โซนถูกใช้ไปแล้วถ้าราคากลับขึ้นมาทะลุ top (prev.high)
-            let isMitigated = false;
-            // [Mitigation Fix] วัดที่ราคาปิด (Body) ไม่ใช่ปลายไส้
-            for (let j = i + 1; j < candles.length; j++) {
-                if (Math.max(candles[j].open, candles[j].close) >= prev.high) {
-                    isMitigated = true;
+        
+        // Bearish OB (โซน Sell): แท่งเขียวสุดท้าย ก่อนแท่งแดง (Impulse)
+        else if (isPrevBullish && isCurrBearish) {
+            // [BOS Check] หา 3-point Fractal Low ก่อนหน้า OB
+            let fractalLow = null;
+            for (let b = i - 2; b >= Math.max(1, i - 15); b--) {
+                if (candles[b].low < candles[b - 1].low && candles[b].low < candles[b + 1].low) {
+                    fractalLow = candles[b].low;
                     break;
                 }
             }
-
-            // เช็กการทำลายโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
-            if (!isMitigated && m5Candles.length > 0) {
-                for (let k = 0; k < m5Candles.length; k++) {
-                    if (m5Candles[k].time >= curr.time && Math.max(m5Candles[k].open, m5Candles[k].close) >= prev.high) {
-                        isMitigated = true;
-                        break;
-                    }
+            
+            if (fractalLow === null) continue;
+            
+            // เช็คว่ามีแท่งไหนหลังจาก OB ที่ปิดต่ำกว่า fractalLow ไหม
+            let hasBOS = false;
+            for (let k = i; k < Math.min(candles.length, i + 10); k++) {
+                if (candles[k].close < fractalLow) {
+                    hasBOS = true;
+                    break;
                 }
             }
+            
+            if (hasBOS) {
+                // [Strict Tap Mitigation] โซนถูกแตะแล้ว (Mitigated) ถ้าราคาขึ้นมาแตะขอบล่าง (prev.low)
+                let isMitigated = false;
+                for (let j = i; j < candles.length; j++) {
+                    if (j === i) {
+                        // แท่งแรกของ impulse ห้ามทะลุขึ้นขอบบน
+                        if (candles[j].high > prev.high) {
+                            isMitigated = true;
+                            break;
+                        }
+                    } else {
+                        // แท่งถัดๆ ไป ถ้าขึ้นมาแตะขอบล่าง ถือว่าใช้ไปแล้ว
+                        if (candles[j].high >= prev.low) {
+                            isMitigated = true;
+                            break;
+                        }
+                    }
+                }
 
-            if (!isMitigated) {
-                orderBlocks.push({
-                    type: 'SELL_ZONE',
-                    name: 'BEARISH_OB',
-                    top: prev.high,
-                    bottom: prev.low,
-                    time: prev.time
-                });
+                // เช็กการแตะโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
+                if (!isMitigated && m5Candles.length > 0) {
+                    for (let k = 0; k < m5Candles.length; k++) {
+                        if (m5Candles[k].time > curr.time && m5Candles[k].high >= prev.low) {
+                            isMitigated = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!isMitigated) {
+                    orderBlocks.push({
+                        type: 'SELL_ZONE',
+                        name: 'BEARISH_OB',
+                        top: prev.high,
+                        bottom: prev.low,
+                        time: prev.time
+                    });
+                }
             }
         }
     }
@@ -286,19 +305,19 @@ function checkChoCh(m5Candles, direction, paIndex = null) {
             for (let i = paIndex - 1; i >= 1; i--) {
                 const c = m5Candles[i];
                 if (c.high > m5Candles[i - 1].high && c.high > m5Candles[i + 1].high) {
-                    targetHigh = Math.max(c.open, c.close); // ใช้ Body High
+                    targetHigh = c.high; // ใช้ Wick High
                     break;
                 }
             }
         }
         
-        // Fallback: ถ้าหา Fractal ไม่เจอ ให้เอาราคาเนื้อเทียนสูงสุดในช่วง 20 แท่งก่อน PA
+        // Fallback: ถ้าหา Fractal ไม่เจอ ให้เอาราคาไส้เทียนสูงสุดในช่วง 20 แท่งก่อน PA
         if (targetHigh === null) {
             const searchEnd = paIndex !== null ? paIndex : m5Candles.length - 1;
             const searchStart = Math.max(0, searchEnd - 20);
             const prevCandles = m5Candles.slice(searchStart, searchEnd);
             if (prevCandles.length === 0) return { isValid: false };
-            targetHigh = Math.max(...prevCandles.map(c => Math.max(c.open, c.close)));
+            targetHigh = Math.max(...prevCandles.map(c => c.high));
         }
 
         const breakMargin = 1.5; // เพิ่มจาก 0.3 → 1.5 pts (Gold spread เฉลี่ย 0.3-0.5 pts → 0.3 คือ noise)
@@ -316,19 +335,19 @@ function checkChoCh(m5Candles, direction, paIndex = null) {
             for (let i = paIndex - 1; i >= 1; i--) {
                 const c = m5Candles[i];
                 if (c.low < m5Candles[i - 1].low && c.low < m5Candles[i + 1].low) {
-                    targetLow = Math.min(c.open, c.close); // ใช้ Body Low
+                    targetLow = c.low; // ใช้ Wick Low
                     break;
                 }
             }
         }
         
-        // Fallback: ถ้าหา Fractal ไม่เจอ ให้เอาราคาเนื้อเทียนต่ำสุดในช่วง 20 แท่งก่อน PA
+        // Fallback: ถ้าหา Fractal ไม่เจอ ให้เอาราคาไส้เทียนต่ำสุดในช่วง 20 แท่งก่อน PA
         if (targetLow === null) {
             const searchEnd = paIndex !== null ? paIndex : m5Candles.length - 1;
             const searchStart = Math.max(0, searchEnd - 20);
             const prevCandles = m5Candles.slice(searchStart, searchEnd);
             if (prevCandles.length === 0) return { isValid: false };
-            targetLow = Math.min(...prevCandles.map(c => Math.min(c.open, c.close)));
+            targetLow = Math.min(...prevCandles.map(c => c.low));
         }
 
         const breakMargin = 1.5; // เพิ่มจาก 0.3 → 1.5 pts (Gold spread เฉลี่ย 0.3-0.5 pts → 0.3 คือ noise)
@@ -411,10 +430,9 @@ function checkIDMSweep(m5Candles, direction, paIndex = null) {
         }
 
         let idmLow = null;
-        for (let i = currentSwingIndex - 2; i >= Math.max(2, currentSwingIndex - 30); i--) {
+        for (let i = currentSwingIndex - 1; i >= Math.max(1, currentSwingIndex - 30); i--) {
             const c = m5Candles[i];
-            if (c.low < m5Candles[i - 1].low && c.low < m5Candles[i - 2].low &&
-                c.low < m5Candles[i + 1].low && c.low < m5Candles[i + 2].low) {
+            if (c.low < m5Candles[i - 1].low && c.low < m5Candles[i + 1].low) {
                 idmLow = c.low;
                 break;
             }
@@ -438,10 +456,9 @@ function checkIDMSweep(m5Candles, direction, paIndex = null) {
         }
 
         let idmHigh = null;
-        for (let i = currentSwingIndex - 2; i >= Math.max(2, currentSwingIndex - 30); i--) {
+        for (let i = currentSwingIndex - 1; i >= Math.max(1, currentSwingIndex - 30); i--) {
             const c = m5Candles[i];
-            if (c.high > m5Candles[i - 1].high && c.high > m5Candles[i - 2].high &&
-                c.high > m5Candles[i + 1].high && c.high > m5Candles[i + 2].high) {
+            if (c.high > m5Candles[i - 1].high && c.high > m5Candles[i + 1].high) {
                 idmHigh = c.high;
                 break;
             }
