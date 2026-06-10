@@ -97,7 +97,7 @@ function findOrderBlock(candles, m5Candles = []) {
         if (isPrevBearish && isCurrBullish) {
             // [BOS Check] หา 3-point Fractal High ก่อนหน้า OB
             let fractalHigh = null;
-            for (let b = i - 2; b >= Math.max(1, i - 15); b--) {
+            for (let b = i - 2; b >= Math.max(1, i - 25); b--) {
                 if (candles[b].high > candles[b - 1].high && candles[b].high > candles[b + 1].high) {
                     fractalHigh = candles[b].high;
                     break;
@@ -116,28 +116,19 @@ function findOrderBlock(candles, m5Candles = []) {
             }
             
             if (hasBOS) {
-                // [Strict Tap Mitigation] โซนถูกแตะแล้ว (Mitigated) ถ้าราคาลงมาแตะขอบบน (prev.high)
+                // [Body-based Mitigation] โซนตายเมื่อแท่งเทียน "ปิดทะลุ (Body Close)" ขอบล่าง
                 let isMitigated = false;
-                for (let j = i; j < candles.length; j++) {
-                    if (j === i) {
-                        // แท่งแรกของ impulse ห้ามทะลุลงขอบล่าง
-                        if (candles[j].low < prev.low) {
-                            isMitigated = true;
-                            break;
-                        }
-                    } else {
-                        // แท่งถัดๆ ไป ถ้าลงมาแตะขอบบน ถือว่าใช้ไปแล้ว
-                        if (candles[j].low <= prev.high) {
-                            isMitigated = true;
-                            break;
-                        }
+                for (let j = i + 1; j < candles.length; j++) {
+                    if (Math.min(candles[j].open, candles[j].close) < prev.low) {
+                        isMitigated = true;
+                        break;
                     }
                 }
 
-                // เช็กการแตะโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
+                // เช็กการทำลายโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
                 if (!isMitigated && m5Candles.length > 0) {
                     for (let k = 0; k < m5Candles.length; k++) {
-                        if (m5Candles[k].time > curr.time && m5Candles[k].low <= prev.high) {
+                        if (m5Candles[k].time > curr.time && Math.min(m5Candles[k].open, m5Candles[k].close) < prev.low) {
                             isMitigated = true;
                             break;
                         }
@@ -160,7 +151,7 @@ function findOrderBlock(candles, m5Candles = []) {
         else if (isPrevBullish && isCurrBearish) {
             // [BOS Check] หา 3-point Fractal Low ก่อนหน้า OB
             let fractalLow = null;
-            for (let b = i - 2; b >= Math.max(1, i - 15); b--) {
+            for (let b = i - 2; b >= Math.max(1, i - 25); b--) {
                 if (candles[b].low < candles[b - 1].low && candles[b].low < candles[b + 1].low) {
                     fractalLow = candles[b].low;
                     break;
@@ -179,28 +170,19 @@ function findOrderBlock(candles, m5Candles = []) {
             }
             
             if (hasBOS) {
-                // [Strict Tap Mitigation] โซนถูกแตะแล้ว (Mitigated) ถ้าราคาขึ้นมาแตะขอบล่าง (prev.low)
+                // [Body-based Mitigation] โซนตายเมื่อแท่งเทียน "ปิดทะลุ (Body Close)" ขอบบน
                 let isMitigated = false;
-                for (let j = i; j < candles.length; j++) {
-                    if (j === i) {
-                        // แท่งแรกของ impulse ห้ามทะลุขึ้นขอบบน
-                        if (candles[j].high > prev.high) {
-                            isMitigated = true;
-                            break;
-                        }
-                    } else {
-                        // แท่งถัดๆ ไป ถ้าขึ้นมาแตะขอบล่าง ถือว่าใช้ไปแล้ว
-                        if (candles[j].high >= prev.low) {
-                            isMitigated = true;
-                            break;
-                        }
+                for (let j = i + 1; j < candles.length; j++) {
+                    if (Math.max(candles[j].open, candles[j].close) > prev.high) {
+                        isMitigated = true;
+                        break;
                     }
                 }
 
-                // เช็กการแตะโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
+                // เช็กการทำลายโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
                 if (!isMitigated && m5Candles.length > 0) {
                     for (let k = 0; k < m5Candles.length; k++) {
-                        if (m5Candles[k].time > curr.time && m5Candles[k].high >= prev.low) {
+                        if (m5Candles[k].time > curr.time && Math.max(m5Candles[k].open, m5Candles[k].close) > prev.high) {
                             isMitigated = true;
                             break;
                         }
