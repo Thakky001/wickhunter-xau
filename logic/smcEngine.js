@@ -123,6 +123,12 @@ async function checkMarketLogic() {
             const htfTrend = getHTFTrend(closedH1Candles);
             const tradingRange = getTradingRange(closedH1Candles);
 
+            // ─── Dynamic Filter: กำหนด Mode ตาม HTF Trend ──────────────────────────
+            const isTrending = (htfTrend === 'BULLISH' || htfTrend === 'BEARISH');
+            const depthPct   = isTrending ? 0.5 : 0.3;   // TREND=50%, STRICT=30%
+            const filterMode = isTrending ? 'TREND_FOLLOWING' : 'STRICT';
+            // ────────────────────────────────────────────────────────────────────────
+
             const closedM5Candle = m5Candles[m5Candles.length - 2];
             const closedM5Array = m5Candles.slice(0, -1);
             // ─── DEBUG: สรุปผลการสแกนรอบนี้ ───────────────────────────────
@@ -133,7 +139,7 @@ async function checkMarketLogic() {
             if (tradingRange) {
                 console.log(`   📐 [Midpoint] Median Close 24H: ${tradingRange.midpoint.toFixed(2)} | Range: ${tradingRange.low.toFixed(2)} - ${tradingRange.high.toFixed(2)}`);
             }
-            console.log(`   📈 [HTF Trend H4]: ${htfTrend} → รับสัญญาณ: ${htfTrend === 'BULLISH' ? 'BUY เท่านั้น' : htfTrend === 'BEARISH' ? 'SELL เท่านั้น' : 'ทั้ง BUY และ SELL (Neutral)'}`);
+            console.log(`   📈 [HTF Trend H4]: ${htfTrend} → [${filterMode}] depth: ${depthPct*100}%, IDM: ${isTrending ? 'ไม่บังคับ' : 'บังคับ'}`);
             console.log(`   🕯️  M5 แท่งปิดล่าสุด | O:${closedM5Candle.open.toFixed(2)} H:${closedM5Candle.high.toFixed(2)} L:${closedM5Candle.low.toFixed(2)} C:${closedM5Candle.close.toFixed(2)}`);
             if (allZones.length > 0) {
                 allZones.forEach((z, idx) => {
@@ -195,7 +201,7 @@ async function checkMarketLogic() {
                     }
 
                     // [NEW] เช็คหา PA ที่เกิดขึ้นในช่วง 30 แท่งล่าสุดในโซน (เพื่อไม่ให้พลาดจังหวะการสะสมกำลังก่อนเบรค ChoCh)
-                    const paResult = checkRecentPA(closedM5Array, zone, 30);
+                    const paResult = checkRecentPA(closedM5Array, zone, 30, depthPct);
 
                     if (paResult.isValid) {
                         // [Zone Violation Check] ตรวจสอบว่าโซนถูกทำลายไปแล้วหรือยัง (ราคาปิดทะลุโซน)
@@ -218,32 +224,54 @@ async function checkMarketLogic() {
                         foundPA = true;
                         console.log(`   ✨ พบ PA (ย้อนหลังไม่เกิน 10 แท่ง) ในโซน [${zone.name}] (${zone.bottom.toFixed(2)} - ${zone.top.toFixed(2)}) | Direction: ${paResult.direction}`);
 
-                        // [IDM + ChoCh] ต้องผ่านทั้งคู่ (AND) ตามหลัก SMC: กวาด Liquidity ก่อน → โครงสร้างเสียทรงยืนยัน
                         const hasIDM = checkIDMSweep(closedM5Array, paResult.direction, paResult.candleIndex);
                         const chochResult = checkChoCh(closedM5Array, paResult.direction, paResult.candleIndex);
                         const hasChoCh = chochResult.isValid;
 
+                        // [Fix] ตรวจสอบว่าเป็น Fresh Break ที่เพิ่งเกิดในแท่งล่าสุดหรือไม่ ป้องกัน Late Entry
+                        const isFreshBreakout = hasChoCh && (chochResult.breakIndex === closedM5Array.length - 1);
+
                         console.log(`   🔎 [IDM]: ${hasIDM ? '✅ พบ Liquidity Sweep' : '❌ ไม่พบ'} | [ChoCh]: ${hasChoCh ? '✅ โครงสร้างเสียทรง' : '❌ ยังไม่เสียทรง'}`);
                         if (chochResult.targetPrice) {
                             if (hasChoCh) {
-                                console.log(`      ↳ 📈 [ChoCh Detail]: ทะลุเป้า ${chochResult.targetPrice.toFixed(2)} ด้วยราคาปิด ${chochResult.breakPrice.toFixed(2)} (Margin: ${chochResult.margin})`);
+                                console.log(`      ↳ 📈 [ChoCh Detail]: ทะลุเป้า ${chochResult.targetPrice.toFixed(2)} ด้วยราคาปิด ${chochResult.breakPrice.toFixed(2)} (ที่แท่ง Index: ${chochResult.breakIndex})`);
+                                if (!isFreshBreakout) {
+                                    console.log(`      ↳ ⚠️ [Late Entry]: สัญญาณ ChoCh เกิดขึ้นไปแล้วก่อนหน้านี้ (ไม่ใช่แท่งปัจจุบัน) → ข้ามเพื่อป้องกันการเข้าช้า`);
+                                }
                             } else {
                                 const requiredPrice = paResult.direction === 'BUY' ? chochResult.targetPrice + chochResult.margin : chochResult.targetPrice - chochResult.margin;
                                 console.log(`      ↳ ⏳ [Waiting ChoCh]: รอกราฟเบรคเป้าหมาย ${chochResult.targetPrice.toFixed(2)} (ต้องทะลุ ${requiredPrice.toFixed(2)})`);
                             }
                         }
 
-                        if (hasIDM && hasChoCh) {
-                            console.log(`   ✅ [PA+IDM+ChoCh] ผ่านครบ 3 ด่าน! โครงสร้างยืนยันกลับตัวแล้ว → เข้าเทรดได้`);
-                        } else if (!hasIDM && hasChoCh) {
-                            console.log(`   ⏭️  มี PA และ ChoCh แล้ว แต่ "ขาดการกวาด IDM (Liquidity Sweep)" ลอจิกไม่ครบ → ไม่เข้าเทรด`);
-                            continue;
-                        } else if (hasIDM && !hasChoCh) {
-                            console.log(`   ⏭️  มี PA และกวาด IDM แล้ว ตอนนี้กำลังรอจังหวะเบรค ChoCh → รอรอบถัดไป`);
-                            continue;
+                        if (filterMode === 'STRICT') {
+                            // 🛡️ STRICT MODE: ต้องผ่านครบ 3 ด่าน (PA + IDM + ChoCh)
+                            if (hasIDM && hasChoCh && isFreshBreakout) {
+                                console.log(`   ✅ [STRICT] PA+IDM+ChoCh ผ่านครบ (Fresh Breakout) → เข้าเทรดได้`);
+                            } else if (hasIDM && hasChoCh && !isFreshBreakout) {
+                                console.log(`   ⏭️  [STRICT] สัญญาณช้าไป (Late Entry) โครงสร้างเบรคไปแล้วตั้งแต่อดีต → รอรอบถัดไป`);
+                                continue;
+                            } else if (!hasIDM && hasChoCh) {
+                                console.log(`   ⏭️  [STRICT] ChoCh ✅ แต่ขาด IDM → ตลาดไซด์เวย์ต้องเข้มงวด ไม่เข้าเทรด`);
+                                continue;
+                            } else if (hasIDM && !hasChoCh) {
+                                console.log(`   ⏭️  [STRICT] IDM ✅ รอ ChoCh → รอรอบถัดไป`);
+                                continue;
+                            } else {
+                                console.log(`   ⏭️  [STRICT] ขาดทั้ง IDM และ ChoCh → รอรอบถัดไป`);
+                                continue;
+                            }
                         } else {
-                            console.log(`   ⏭️  เจอ PA แล้ว แต่ยังขาดทั้ง IDM Sweep และ ChoCh → รอรอบถัดไป`);
-                            continue;
+                            // 🚀 TREND FOLLOWING MODE: ต้องการแค่ ChoCh (H4 trend = IDM ตัวใหญ่แล้ว)
+                            if (hasChoCh && isFreshBreakout) {
+                                console.log(`   ✅ [TREND] PA+ChoCh ผ่าน! (Fresh Breakout) H4 ${htfTrend} เป็น confluence แทน IDM → เข้าเทรดได้`);
+                            } else if (hasChoCh && !isFreshBreakout) {
+                                console.log(`   ⏭️  [TREND] สัญญาณช้าไป (Late Entry) โครงสร้างเบรคไปแล้วตั้งแต่อดีต → รอรอบถัดไป`);
+                                continue;
+                            } else {
+                                console.log(`   ⏭️  [TREND] รอ ChoCh → รอรอบถัดไป`);
+                                continue;
+                            }
                         }
                         foundValidSignal = true;
 
@@ -256,8 +284,8 @@ async function checkMarketLogic() {
 
                             if (ENGINE_CONFIG.SL_MODE === 'SWING_HIGH_LOW') {
                                 const pIndex = paResult.candleIndex;
-                                const startIndex = Math.max(0, pIndex - ENGINE_CONFIG.SWING_LOOKBACK_CANDLES);
-                                const recentCandles = closedM5Array.slice(startIndex, pIndex + 1);
+                                const entryIndex = closedM5Array.length - 1; // แท่งที่เกิด ChoCh (ปัจจุบัน)
+                                const recentCandles = closedM5Array.slice(pIndex, entryIndex + 1);
                                 if (signalDirection === 'BUY') {
                                     const swingLow = Math.min(...recentCandles.map(c => c.low));
                                     cancelPrice = swingLow - ENGINE_CONFIG.SL_BUFFER;
@@ -347,8 +375,8 @@ async function checkMarketLogic() {
 
                         if (ENGINE_CONFIG.SL_MODE === 'SWING_HIGH_LOW') {
                             const pIndex = paResult.candleIndex;
-                            const startIndex = Math.max(0, pIndex - ENGINE_CONFIG.SWING_LOOKBACK_CANDLES);
-                            const recentCandles = closedM5Array.slice(startIndex, pIndex + 1);
+                            const entryIndex = closedM5Array.length - 1; // แท่งปัจจุบัน (ที่รอเบรค)
+                            const recentCandles = closedM5Array.slice(pIndex, entryIndex + 1);
                             if (signalDirection === 'BUY') {
                                 const swingLow = Math.min(...recentCandles.map(c => c.low));
                                 cancelPrice = swingLow - ENGINE_CONFIG.SL_BUFFER;

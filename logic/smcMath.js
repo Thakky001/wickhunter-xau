@@ -213,7 +213,7 @@ function findOrderBlock(candles, m5Candles = []) {
 
 
 
-function checkPriceActionInZone(candle, zone) {
+function checkPriceActionInZone(candle, zone, depthPct = 0.3) {
     const totalLength = candle.high - candle.low;
 
     // กรองแท่งเทียนที่ไม่มีปริมาณการซื้อขาย (Micro-Wicks) ช่วงตลาดเงียบ
@@ -239,7 +239,7 @@ function checkPriceActionInZone(candle, zone) {
         // [Zone Depth Filter] PA ต้องแตะใน BOTTOM 30% ของโซนเท่านั้น
         // แรงซื้อจริงอยู่ที่ก้นโซน ไม่ใช่แค่เพิ่งเข้ามาในโซนด้านบน
         const zoneHeight = zone.top - zone.bottom;
-        const bottomThreshold = zone.bottom + (zoneHeight * 0.3);
+        const bottomThreshold = zone.bottom + (zoneHeight * depthPct);
         const isInDepthZone = candle.low <= bottomThreshold;
 
         if (isTouchOrSweepZone && isCloseInsideOrAbove && isBullishPA && isInDepthZone) {
@@ -261,7 +261,7 @@ function checkPriceActionInZone(candle, zone) {
         // [Zone Depth Filter] PA ต้องแตะใน TOP 30% ของโซนเท่านั้น
         // แรงขายจริงอยู่ที่ยอดโซน ก้นโซนยังมีแรงดูดขึ้นไปเติม gap อีกมาก
         const zoneHeight = zone.top - zone.bottom;
-        const topThreshold = zone.top - (zoneHeight * 0.3);
+        const topThreshold = zone.top - (zoneHeight * depthPct);
         const isInDepthZone = candle.high >= topThreshold;
 
         if (isTouchOrSweepZone && isCloseInsideOrBelow && isBearishPA && isInDepthZone) {
@@ -309,19 +309,21 @@ function checkChoCh(m5Candles, direction, paIndex = null) {
         // [Fresh Break Fix] ค้นหาการเบรคในช่วง Valid Window (10 แท่งหลังเกิด PA)
         let isFreshBreak = false;
         let breakPrice = null;
+        let breakIndex = null;
         const startIndex = paIndex !== null ? paIndex : m5Candles.length - 2;
 
-        for (let i = startIndex + 1; i < Math.min(m5Candles.length, startIndex + 10); i++) {
+        for (let i = startIndex + 1; i < m5Candles.length; i++) {
             if (m5Candles[i - 1].close <= (targetHigh + breakMargin) && m5Candles[i].close > (targetHigh + breakMargin)) {
                 isFreshBreak = true;
                 breakPrice = m5Candles[i].close;
+                breakIndex = i;
                 break;
             }
         }
 
         if (!isFreshBreak) return { isValid: false, targetPrice: targetHigh, margin: breakMargin };
 
-        return { isValid: true, targetPrice: targetHigh, breakPrice: breakPrice, margin: breakMargin };
+        return { isValid: true, targetPrice: targetHigh, breakPrice: breakPrice, margin: breakMargin, breakIndex: breakIndex };
     }
 
     if (direction === 'SELL') {
@@ -351,19 +353,21 @@ function checkChoCh(m5Candles, direction, paIndex = null) {
         // [Fresh Break Fix] ค้นหาการเบรคในช่วง Valid Window (10 แท่งหลังเกิด PA)
         let isFreshBreak = false;
         let breakPrice = null;
+        let breakIndex = null;
         const startIndex = paIndex !== null ? paIndex : m5Candles.length - 2;
 
-        for (let i = startIndex + 1; i < Math.min(m5Candles.length, startIndex + 10); i++) {
+        for (let i = startIndex + 1; i < m5Candles.length; i++) {
             if (m5Candles[i - 1].close >= (targetLow - breakMargin) && m5Candles[i].close < (targetLow - breakMargin)) {
                 isFreshBreak = true;
                 breakPrice = m5Candles[i].close;
+                breakIndex = i;
                 break;
             }
         }
 
         if (!isFreshBreak) return { isValid: false, targetPrice: targetLow, margin: breakMargin };
 
-        return { isValid: true, targetPrice: targetLow, breakPrice: breakPrice, margin: breakMargin };
+        return { isValid: true, targetPrice: targetLow, breakPrice: breakPrice, margin: breakMargin, breakIndex: breakIndex };
     }
 
     return { isValid: false };
@@ -482,10 +486,10 @@ function checkIDMSweep(m5Candles, direction, paIndex = null) {
 }
 
 // ─── Recent Price Action Lookback ──────────────────────────────────────────────
-function checkRecentPA(m5Candles, zone, lookback = 10) {
+function checkRecentPA(m5Candles, zone, lookback = 10, depthPct = 0.3) {
     // ลูปย้อนหลังจากแท่งล่าสุดลงไปในอดีต (ไม่เกิน lookback แท่ง)
     for (let i = m5Candles.length - 1; i >= Math.max(0, m5Candles.length - lookback); i--) {
-        const paResult = checkPriceActionInZone(m5Candles[i], zone);
+        const paResult = checkPriceActionInZone(m5Candles[i], zone, depthPct);
         if (paResult.isValid) {
             // คืน candleIndex ไปด้วยเพื่อให้ checkChoCh ใช้เป็น anchor
             // (ป้องกัน ChoCh ยืนยันด้วย candle จาก swing อื่นที่ไม่เกี่ยวกับ PA นี้)
