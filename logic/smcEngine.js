@@ -653,6 +653,8 @@ async function checkMarketLogic() {
                     } else {
                         console.log(`   ❌ [Continuation] ไม่พบ M5 FVG ระหว่าง BOS impulse`);
                     }
+                } else {
+                    console.log(`   ❌ [Continuation] ไม่พบ M5 BOS หรือโครงสร้างยังไม่เบรกตามเทรนด์ (${bosDirection})`);
                 }
             }
             // ────────────────────────────────────────────────────────────────────
