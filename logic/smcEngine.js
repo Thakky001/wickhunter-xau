@@ -1,5 +1,5 @@
 const { sendSignal } = require('../services/telegram');
-const { findFVG, findOrderBlock, checkPriceActionInZone, checkRecentPA, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep } = require('./smcMath');
+const { findFVG, findOrderBlock, checkPriceActionInZone, checkRecentPA, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep, checkM1ChochBreak } = require('./smcMath');
 const { getCandles } = require('../services/twelveData');
 const dashboardState = require('../services/dashboardState');
 const sheets = require('../services/sheets');
@@ -8,6 +8,7 @@ const STATES = {
     SCANNING: 'SCANNING',
     WAITING_WICK_BREAK: 'WAITING_WICK_BREAK',
     TRIGGERED: 'TRIGGERED',
+    WAITING_CHOCH: 'WAITING_CHOCH',
     MONITORING_TRADE: 'MONITORING_TRADE'
 };
 
@@ -21,7 +22,9 @@ const ENGINE_CONFIG = {
     MAX_SL_POINTS: 15.0,         // จำกัดระยะ SL สูงสุดไม่เกิน 15.0 USD (1,500 จุด)
     MIN_TP_POINTS: 8.0,          // จำกัดระยะ TP ขั้นต่ำไม่น้อยกว่า 8.0 USD (800 จุด) เพื่อให้ SL กว้างพอที่จะรอดจากการสะบัด
     ENTRY_MODE: 'CANDLE_CLOSE',  // [Fix#2] สลับเป็น CANDLE_CLOSE เพื่อเข้าที่ราคาปิดแท่ง PA (ไม่ใช่ยอด High ที่เป็น Resistance)
-    MAX_ZONE_AGE_HOURS: 48       // กรองโซน H1 ย้อนหลังไม่เกิน 48 ชั่วโมง (2 วัน)
+    MAX_ZONE_AGE_HOURS: 48,      // กรองโซน H1 ย้อนหลังไม่เกิน 48 ชั่วโมง (2 วัน)
+    CHOCH_M1_MARGIN: 2.0,        // [M1 ChoCh] margin สำหรับยืนยัน ChoCh ผ่านแท่ง M1 (สูงกว่า M5 1.5 เพราะ M1 มี noise มากกว่า)
+    CHOCH_WAIT_TIMEOUT_MS: 15 * 60 * 1000  // [M1 ChoCh] หมดเวลารอ ChoCh break จาก M1 (15 นาที)
 };
 
 const PRE_ALERT_TIMEOUT_MS = 15 * 60 * 1000;
@@ -43,6 +46,7 @@ let lastFallbackCheckAt = 0;
 let isCheckingWaitingGuard = false;
 let lastTradedCandleTime = null; // เก็บบันทึกเวลาของแท่ง M5 ที่เคยส่งสัญญาณไปแล้ว
 let isProcessingTick = false; // ล็อกป้องกัน tick หลายตัวประมวลผลพร้อมกัน (ป้องกันแจ้งเตือนซ้ำ)
+let pendingChoch = null;      // [M1 ChoCh] เก็บข้อมูล setup ที่รอ ChoCh break จาก M1
 
 function clearActiveSignal() {
     referenceWickPrice = 0;
@@ -51,6 +55,7 @@ function clearActiveSignal() {
     waitingStartedAt = null;
     lastFallbackCheckAt = 0;
     activeTrade = null;
+    pendingChoch = null;
     dashboardState.update({ activeTrade: null });
 }
 
@@ -253,35 +258,112 @@ async function checkMarketLogic() {
                             }
                         }
 
+                        // ─── [M1 ChoCh] ตรวจสอบเงื่อนไขเข้าเทรด หรือเข้า WAITING_CHOCH ───
+                        let shouldTrigger = false;
+                        let shouldWaitChoch = false;
+
                         if (filterMode === 'STRICT') {
                             // 🛡️ STRICT MODE: ต้องผ่านครบ 3 ด่าน (PA + IDM + ChoCh)
                             if (hasIDM && hasChoCh && isFreshBreakout) {
                                 console.log(`   ✅ [STRICT] PA+IDM+ChoCh ผ่านครบ (Fresh Breakout) → เข้าเทรดได้`);
+                                shouldTrigger = true;
                             } else if (hasIDM && hasChoCh && !isFreshBreakout) {
                                 console.log(`   ⏭️  [STRICT] สัญญาณช้าไป (Late Entry) โครงสร้างเบรคไปแล้วตั้งแต่อดีต → รอรอบถัดไป`);
-                                continue;
                             } else if (!hasIDM && hasChoCh) {
                                 console.log(`   ⏭️  [STRICT] ChoCh ✅ แต่ขาด IDM → ตลาดไซด์เวย์ต้องเข้มงวด ไม่เข้าเทรด`);
-                                continue;
+                            } else if (hasIDM && !hasChoCh && chochResult.targetPrice) {
+                                console.log(`   ⏳ [STRICT] IDM ✅ + ChoCh Target พบแล้ว (${chochResult.targetPrice.toFixed(2)}) → เข้า WAITING_CHOCH รอ M1 ยืนยัน Break`);
+                                shouldWaitChoch = true;
                             } else if (hasIDM && !hasChoCh) {
-                                console.log(`   ⏭️  [STRICT] IDM ✅ รอ ChoCh → รอรอบถัดไป`);
-                                continue;
+                                console.log(`   ⏭️  [STRICT] IDM ✅ แต่หา ChoCh Target ไม่เจอ → รอรอบถัดไป`);
                             } else {
                                 console.log(`   ⏭️  [STRICT] ขาดทั้ง IDM และ ChoCh → รอรอบถัดไป`);
-                                continue;
                             }
                         } else {
                             // 🚀 TREND FOLLOWING MODE: ต้องการแค่ ChoCh (H4 trend = IDM ตัวใหญ่แล้ว)
                             if (hasChoCh && isFreshBreakout) {
                                 console.log(`   ✅ [TREND] PA+ChoCh ผ่าน! (Fresh Breakout) H4 ${htfTrend} เป็น confluence แทน IDM → เข้าเทรดได้`);
+                                shouldTrigger = true;
                             } else if (hasChoCh && !isFreshBreakout) {
                                 console.log(`   ⏭️  [TREND] สัญญาณช้าไป (Late Entry) โครงสร้างเบรคไปแล้วตั้งแต่อดีต → รอรอบถัดไป`);
-                                continue;
+                            } else if (!hasChoCh && chochResult.targetPrice) {
+                                console.log(`   ⏳ [TREND] ChoCh Target พบแล้ว (${chochResult.targetPrice.toFixed(2)}) → เข้า WAITING_CHOCH รอ M1 ยืนยัน Break`);
+                                shouldWaitChoch = true;
                             } else {
-                                console.log(`   ⏭️  [TREND] รอ ChoCh → รอรอบถัดไป`);
-                                continue;
+                                console.log(`   ⏭️  [TREND] หา ChoCh Target ไม่เจอ → รอรอบถัดไป`);
                             }
                         }
+
+                        // ─── [M1 ChoCh] เข้า WAITING_CHOCH: รอแท่ง M1 ยืนยัน ChoCh Break ──────
+                        if (shouldWaitChoch) {
+                            // Pre-calculate SL จาก M5 data ปัจจุบัน
+                            let preCalcSL;
+                            if (ENGINE_CONFIG.SL_MODE === 'SWING_HIGH_LOW') {
+                                const pIndex = paResult.candleIndex;
+                                const entryIndex = closedM5Array.length - 1;
+                                const recentCandles = closedM5Array.slice(pIndex, entryIndex + 1);
+                                if (paResult.direction === 'BUY') {
+                                    const swingLow = Math.min(...recentCandles.map(c => c.low));
+                                    preCalcSL = swingLow - ENGINE_CONFIG.SL_BUFFER;
+                                } else {
+                                    const swingHigh = Math.max(...recentCandles.map(c => c.high));
+                                    preCalcSL = swingHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
+                                }
+                            } else {
+                                preCalcSL = paResult.direction === 'BUY'
+                                    ? paResult.paCandleLow - ENGINE_CONFIG.SL_BUFFER
+                                    : paResult.paCandleHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
+                            }
+
+                            pendingChoch = {
+                                direction: paResult.direction,
+                                chochTargetPrice: chochResult.targetPrice,
+                                chochMargin: ENGINE_CONFIG.CHOCH_M1_MARGIN,
+                                preCalcSL: preCalcSL,
+                                zoneName: zone.name,
+                                filterMode: filterMode,
+                                m5CandleTime: closedM5Candle.time
+                            };
+
+                            signalDirection = paResult.direction;
+                            waitingStartedAt = Date.now();
+                            lastTickAt = Date.now();
+                            lastTradedCandleTime = closedM5Candle.time;
+                            currentState = STATES.WAITING_CHOCH;
+                            dashboardState.update({ botState: currentState });
+
+                            const requiredBreakPrice = paResult.direction === 'BUY'
+                                ? chochResult.targetPrice + ENGINE_CONFIG.CHOCH_M1_MARGIN
+                                : chochResult.targetPrice - ENGINE_CONFIG.CHOCH_M1_MARGIN;
+
+                            const preAlertMsg = `⏳ <b>เตรียมตัว! พบ PA${filterMode === 'STRICT' ? ' + IDM' : ''} ในโซน ${zone.name} H1</b>\n\n` +
+                                `📊 รอยืนยัน ChoCh จากแท่ง <b>M1 Real-time</b> (Finnhub)\n` +
+                                `🎯 เป้า ChoCh: ${chochResult.targetPrice.toFixed(2)} (ต้อง${paResult.direction === 'BUY' ? 'ปิดเหนือ' : 'ปิดใต้'} ${requiredBreakPrice.toFixed(2)})\n\n` +
+                                `📍 SL โดยประมาณ: ${preCalcSL.toFixed(2)}\n` +
+                                `⏱️ หมดเวลาใน: ${ENGINE_CONFIG.CHOCH_WAIT_TIMEOUT_MS / 60000} นาที`;
+
+                            await sendSignal(preAlertMsg);
+
+                            dashboardState.addSignal({
+                                type: 'PRE_ALERT',
+                                zone: zone.name,
+                                direction: paResult.direction,
+                                chochTarget: chochResult.targetPrice,
+                                sl: preCalcSL,
+                                time: new Date().toISOString()
+                            });
+                            sheets.appendSignal({
+                                type: 'PRE_ALERT',
+                                zone: zone.name,
+                                direction: paResult.direction,
+                                chochTarget: chochResult.targetPrice,
+                                sl: preCalcSL
+                            });
+
+                            break; // ออกจาก zone loop
+                        }
+
+                        if (!shouldTrigger) continue;
                         foundValidSignal = true;
 
                         signalDirection = paResult.direction;
@@ -522,8 +604,35 @@ async function expireWaitingSignal() {
     await sendSignal(`⌛ <b>หมดอายุสัญญาณ ${direction}</b>\n\nรอเบรกนานเกิน 15 นาที แต่ราคาไม่ถึง Entry/SL ระบบกลับไปสแกนหาโซนใหม่แล้ว`);
 }
 
+// ─── [M1 ChoCh] หมดเวลารอ ChoCh break จาก M1 ────────────────────────────
+async function expireWaitingChoch() {
+    if (currentState !== STATES.WAITING_CHOCH) return;
+
+    const direction = pendingChoch ? pendingChoch.direction : signalDirection;
+    const target = pendingChoch ? pendingChoch.chochTargetPrice : 0;
+
+    currentState = STATES.SCANNING;
+    console.log(`⌛ [SMC Engine]: WAITING_CHOCH ${direction} หมดอายุ ระบบกลับไป SCANNING`);
+    dashboardState.update({ botState: currentState });
+
+    dashboardState.addSignal({
+        type: 'EXPIRED',
+        direction,
+        chochTarget: target,
+        time: new Date().toISOString()
+    });
+    sheets.appendSignal({
+        type: 'EXPIRED',
+        direction,
+        chochTarget: target
+    });
+    clearActiveSignal();
+
+    await sendSignal(`⌛ <b>หมดอายุ WAITING_CHOCH ${direction}</b>\n\nรอ M1 ยืนยัน ChoCh นานเกิน ${ENGINE_CONFIG.CHOCH_WAIT_TIMEOUT_MS / 60000} นาที แต่ราคาไม่ทะลุเป้า ${target > 0 ? target.toFixed(2) : '-'}\nระบบกลับสู่โหมดสแกนหาโซนใหม่...`);
+}
+
 async function checkWaitingGuard() {
-    if ((currentState !== STATES.WAITING_WICK_BREAK && currentState !== STATES.MONITORING_TRADE) || isCheckingWaitingGuard) return;
+    if ((currentState !== STATES.WAITING_WICK_BREAK && currentState !== STATES.WAITING_CHOCH && currentState !== STATES.MONITORING_TRADE) || isCheckingWaitingGuard) return;
 
     const now = Date.now();
     if (currentState === STATES.WAITING_WICK_BREAK && waitingStartedAt && now - waitingStartedAt >= PRE_ALERT_TIMEOUT_MS) {
@@ -532,6 +641,19 @@ async function checkWaitingGuard() {
             await expireWaitingSignal();
         } catch (error) {
             console.error("❌ [SMC Engine Error] expireWaitingSignal failed:", error);
+        } finally {
+            isCheckingWaitingGuard = false;
+        }
+        return;
+    }
+
+    // [M1 ChoCh] ตรวจสอบ timeout สำหรับ WAITING_CHOCH
+    if (currentState === STATES.WAITING_CHOCH && waitingStartedAt && now - waitingStartedAt >= ENGINE_CONFIG.CHOCH_WAIT_TIMEOUT_MS) {
+        isCheckingWaitingGuard = true;
+        try {
+            await expireWaitingChoch();
+        } catch (error) {
+            console.error("❌ [SMC Engine Error] expireWaitingChoch failed:", error);
         } finally {
             isCheckingWaitingGuard = false;
         }
@@ -570,6 +692,27 @@ async function checkWaitingGuard() {
                 } else if (latestCandle.low <= referenceWickPrice) {
                     await processTickData(latestCandle.low, 'fallback');
                 }
+            }
+        } else if (currentState === STATES.WAITING_CHOCH && pendingChoch) {
+            // [M1 ChoCh Fallback] ตรวจสอบ SL กวาดกิน (Invalidated) ก่อน
+            if (pendingChoch.direction === 'BUY' && latestCandle.low <= pendingChoch.preCalcSL) {
+                console.log(`   🛰️ [Fallback] ราคาต่ำสุด (${latestCandle.low.toFixed(2)}) กวาดโดน SL → Invalidate WAITING_CHOCH`);
+                await processTickData(latestCandle.low, 'fallback');
+            } else if (pendingChoch.direction === 'SELL' && latestCandle.high >= pendingChoch.preCalcSL) {
+                console.log(`   🛰️ [Fallback] ราคาสูงสุด (${latestCandle.high.toFixed(2)}) กวาดโดน SL → Invalidate WAITING_CHOCH`);
+                await processTickData(latestCandle.high, 'fallback');
+            } else {
+                // ถ้าไม่โดน SL ให้ใช้ M5 close ล่าสุดเป็น M1 close สำรอง
+                const syntheticM1 = {
+                    open: latestCandle.open,
+                    high: latestCandle.high,
+                    low: latestCandle.low,
+                    close: latestCandle.close,
+                    time: latestCandle.time || new Date().toISOString(),
+                    tickCount: 999
+                };
+                console.log(`   🛰️ [Fallback] ใช้ M5 close (${latestCandle.close.toFixed(2)}) เป็น fallback สำหรับ M1 ChoCh check`);
+                await processM1Close(syntheticM1);
             }
         } else if (currentState === STATES.MONITORING_TRADE && activeTrade) {
             if (activeTrade.direction === 'BUY') {
@@ -738,6 +881,43 @@ async function processTickData(currentPrice, source = 'tick') {
             }
         }
 
+        // [M1 ChoCh] ตรวจสอบว่าราคาเหวี่ยงไปชน SL ก่อนที่จะมีแท่ง M1 ปิดทะลุแนว ChoCh หรือไม่
+        if (currentState === STATES.WAITING_CHOCH && pendingChoch) {
+            const { direction, preCalcSL } = pendingChoch;
+            let isInvalidated = false;
+
+            if (direction === 'BUY' && price <= preCalcSL) isInvalidated = true;
+            if (direction === 'SELL' && price >= preCalcSL) isInvalidated = true;
+
+            if (isInvalidated) {
+                const invalidDir = direction;
+                const invalidSL = preCalcSL;
+
+                currentState = STATES.SCANNING;
+                clearActiveSignal();
+                console.log(`❌ [SMC Engine]: กราฟผิดทาง! ราคาเหวี่ยงชน SL (${invalidSL.toFixed(2)}) ก่อนเบรก ChoCh ระบบกลับไป SCANNING`);
+                dashboardState.update({ botState: currentState });
+
+                dashboardState.addSignal({
+                    type: 'INVALIDATED',
+                    direction: invalidDir,
+                    sl: invalidSL,
+                    currentPrice: price,
+                    time: new Date().toISOString()
+                });
+                sheets.appendSignal({
+                    type: 'INVALIDATED',
+                    direction: invalidDir,
+                    sl: invalidSL,
+                    currentPrice: price
+                });
+
+                const sourceNote = source === 'fallback' ? '\n\n⚠️ ตรวจพบจาก TwelveData fallback' : '';
+                await sendSignal(`❌ <b>ยกเลิกการรอ ChoCh ${invalidDir}</b>\n\nกราฟผิดทาง ทะลุจุด SL ที่ <b>${invalidSL.toFixed(2)}</b> ก่อนการทำลายโครงสร้าง ChoCh ระบบกลับสู่โหมดสแกนหาโซนใหม่...${sourceNote}`);
+                return;
+            }
+        }
+
         if (currentState === STATES.WAITING_WICK_BREAK) {
             const sourceLabel = source === 'fallback' ? 'FALLBACK' : 'TICK';
             const sourceNote = source === 'fallback'
@@ -861,6 +1041,107 @@ async function processTickData(currentPrice, source = 'tick') {
     }
 }
 
+// ─── [M1 ChoCh] ประมวลผลแท่ง M1 ที่ปิดแล้ว ────────────────────────────────
+// เรียกจาก Finnhub M1 Candle Builder เมื่อแท่ง M1 ปิด (ทุก 1 นาที)
+// ใช้สำหรับยืนยัน ChoCh break แบบ real-time
+async function processM1Close(m1Candle) {
+    if (currentState !== STATES.WAITING_CHOCH || !pendingChoch) return;
+
+    const { direction, chochTargetPrice, chochMargin, preCalcSL, zoneName, filterMode } = pendingChoch;
+
+    // เช็คว่า M1 close ทะลุ ChoCh target หรือยัง
+    const isBreak = checkM1ChochBreak(m1Candle.close, direction, chochTargetPrice, chochMargin);
+
+    const requiredPrice = direction === 'BUY'
+        ? chochTargetPrice + chochMargin
+        : chochTargetPrice - chochMargin;
+
+    console.log(`   🕐 [M1 Close] ราคาปิด: ${m1Candle.close.toFixed(2)} | เป้า: ${requiredPrice.toFixed(2)} | Break: ${isBreak ? '✅' : '❌'} | Ticks: ${m1Candle.tickCount}`);
+
+    if (!isBreak) return;
+
+    // 🎉 M1 ยืนยัน ChoCh Break!
+    console.log(`\n🔥🔥🔥 [M1 ChoCh CONFIRMED] แท่ง M1 ปิดทะลุ ChoCh Target! Direction: ${direction} | Zone: ${zoneName} 🔥🔥🔥`);
+
+    const entryPrice = m1Candle.close;
+    let sl = preCalcSL;
+    let risk = Math.abs(entryPrice - sl);
+
+    // เช็ค MAX SL
+    if (risk > ENGINE_CONFIG.MAX_SL_POINTS) {
+        console.log(`   🚫 ข้ามสัญญาณ! ระยะ SL กว้างเกินไป (${risk.toFixed(2)} pts > MAX ${ENGINE_CONFIG.MAX_SL_POINTS} pts) → กลับไป SCANNING`);
+        currentState = STATES.SCANNING;
+        clearActiveSignal();
+        dashboardState.update({ botState: currentState });
+        return;
+    }
+
+    // MIN risk adjustment
+    const minRisk = ENGINE_CONFIG.MIN_TP_POINTS / 2;
+    if (risk < minRisk) {
+        risk = minRisk;
+        sl = direction === 'BUY' ? entryPrice - risk : entryPrice + risk;
+    }
+
+    const tp1Price = direction === 'BUY' ? entryPrice + (risk * 2) : entryPrice - (risk * 2);
+    const tp2Price = direction === 'BUY' ? entryPrice + (risk * 3) : entryPrice - (risk * 3);
+
+    // Transition: WAITING_CHOCH → TRIGGERED → MONITORING_TRADE
+    referenceWickPrice = entryPrice;
+    cancelPrice = sl;
+    signalDirection = direction;
+    currentState = STATES.TRIGGERED;
+    waitingStartedAt = null;
+    dashboardState.update({ botState: currentState });
+
+    dashboardState.addSignal({
+        type: 'TRIGGERED',
+        direction: direction,
+        entry: entryPrice,
+        sl: sl,
+        tp1: tp1Price,
+        tp2: tp2Price,
+        currentPrice: entryPrice,
+        time: new Date().toISOString()
+    });
+    sheets.appendSignal({
+        type: 'TRIGGERED',
+        direction: direction,
+        entry: entryPrice,
+        sl: sl,
+        tp1: tp1Price,
+        tp2: tp2Price,
+        currentPrice: entryPrice
+    });
+
+    const msg = `🔥 <b>WickHunter XAU | SIGNAL TRIGGERED (M1 ChoCh)</b> 🔥\n\n` +
+        `✅ <b>Direction:</b> ${direction}\n` +
+        `✅ <b>Action:</b> M1 ยืนยัน ChoCh Break! โครงสร้างเสียทรงจริง\n` +
+        `📊 <b>Mode:</b> ${filterMode}\n\n` +
+        `📍 <b>Entry Price:</b> ${entryPrice.toFixed(2)}\n` +
+        `🛑 <b>Stop Loss:</b> ${sl.toFixed(2)}\n` +
+        `🎯 <b>TP 1 (RR 1:2):</b> ${tp1Price.toFixed(2)}\n` +
+        `🎯 <b>TP 2 (RR 1:3):</b> ${tp2Price.toFixed(2)}\n\n` +
+        `🚀 <b>Current Price:</b> ${entryPrice.toFixed(2)}`;
+
+    await sendSignal(msg);
+
+    activeTrade = {
+        direction: direction,
+        entry: entryPrice,
+        sl: sl,
+        tp1: tp1Price,
+        tp2: tp2Price,
+        isTp1Hit: false,
+        time: new Date().toISOString()
+    };
+
+    currentState = STATES.MONITORING_TRADE;
+    console.log(`🟢 [SMC Engine]: M1 ChoCh สัญญาณถูกส่งแล้ว! เปลี่ยนสถานะบอทเป็น MONITORING_TRADE`);
+    dashboardState.update({ botState: currentState, activeTrade });
+    pendingChoch = null;
+}
+
 function startSmartSyncLoop() {
     checkMarketLogic(); // รันครั้งแรกทันที
 
@@ -879,4 +1160,4 @@ function startSmartSyncLoop() {
 startSmartSyncLoop();
 setInterval(checkWaitingGuard, WAITING_GUARD_INTERVAL_MS);
 
-module.exports = { processTickData, forceScanNow };
+module.exports = { processTickData, processM1Close, forceScanNow };

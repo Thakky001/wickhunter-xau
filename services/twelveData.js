@@ -14,7 +14,8 @@ async function getCandles(resolution, limit) {
     }
 
     // Ticker ของทองคำใน Twelve Data คือ XAU/USD
-    const url = `https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=${interval}&outputsize=${limit}&apikey=${keys.TWELVEDATA_API_KEY}`;
+    // [Bug Fix] ระบุ timezone=UTC เสมอ เพื่อให้ชัวร์ว่าข้อมูลเวลาไม่คาดเคลื่อน
+    const url = `https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=${interval}&outputsize=${limit}&timezone=UTC&apikey=${keys.TWELVEDATA_API_KEY}`;
 
     try {
         const response = await axios.get(url);
@@ -30,7 +31,9 @@ async function getCandles(resolution, limit) {
 
             for (let i = 0; i < rawValues.length; i++) {
                 const q = rawValues[i];
-                const timeMs = new Date(q.datetime).getTime();
+                // [Bug Fix] บังคับให้ Node.js อ่าน string เป็น UTC โดยเติม 'Z' ท้าย string (และเปลี่ยนช่องว่างเป็น T ตามมาตรฐาน ISO)
+                const safeDateStr = q.datetime.replace(' ', 'T') + 'Z';
+                const timeMs = new Date(safeDateStr).getTime();
                 
                 // [FIX] เช็ควันและเวลา UTC เพื่อกรองช่วงเสาร์-อาทิตย์ที่ตลาดปิด
                 const d = new Date(timeMs);

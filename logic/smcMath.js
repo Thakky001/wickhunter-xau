@@ -499,4 +499,17 @@ function checkRecentPA(m5Candles, zone, lookback = 10, depthPct = 0.3) {
     return { isValid: false };
 }
 
-module.exports = { findFVG, findOrderBlock, checkPriceActionInZone, checkRecentPA, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep };
+// ─── M1 ChoCh Break Confirmation ──────────────────────────────────────────────
+// ยืนยัน ChoCh break จากราคาปิดแท่ง M1 (Finnhub real-time)
+// แยกจาก checkChoCh เพราะใช้ TF ต่างกัน: Target จาก M5 Fractal, Break จาก M1 Close
+function checkM1ChochBreak(m1Close, direction, targetPrice, margin = 2.0) {
+    if (direction === 'BUY') {
+        return m1Close > (targetPrice + margin);
+    }
+    if (direction === 'SELL') {
+        return m1Close < (targetPrice - margin);
+    }
+    return false;
+}
+
+module.exports = { findFVG, findOrderBlock, checkPriceActionInZone, checkRecentPA, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep, checkM1ChochBreak };

@@ -1,6 +1,6 @@
 const WebSocket = require('ws');
 const keys = require('../config/keys');
-const { processTickData } = require('../logic/smcEngine');
+const { processTickData, processM1Close } = require('../logic/smcEngine');
 const dashboardState = require('./dashboardState');
 
 // Exponential Backoff: เริ่มที่ 5 วิ → 10 → 20 → 40 → สูงสุด 120 วิ
@@ -10,6 +10,74 @@ let currentDelay = INITIAL_DELAY;
 let activeWs = null;
 let heartbeatTimer = null;
 let reconnectTimer = null;
+
+// ─── M1 Candle Builder ──────────────────────────────────────────────────────────────────
+// สร้างแท่งเทียน M1 จาก tick data ของ Finnhub แบบ real-time
+// ใช้สำหรับยืนยัน ChoCh break แทนการรอ M5 close (เร็วกว่า 5 เท่า)
+const M1_BUFFER_SIZE = 15;
+const M1_MIN_TICK_COUNT = 5;  // จำนวน tick ขั้นต่ำเพื่อให้แท่ง M1 น่าเชื่อถือ
+
+let currentM1 = null;
+let m1Buffer = [];
+
+function getMinuteKey() {
+    const now = new Date();
+    return now.getUTCHours() * 60 + now.getUTCMinutes();
+}
+
+function aggregateM1Tick(price) {
+    const minuteKey = getMinuteKey();
+
+    if (!currentM1 || currentM1.minuteKey !== minuteKey) {
+        // นาทีเปลี่ยน → แท่ง M1 ก่อนหน้าปิดแล้ว
+        if (currentM1 && currentM1.tickCount > 0) {
+            const completedCandle = {
+                open: currentM1.open,
+                high: currentM1.high,
+                low: currentM1.low,
+                close: currentM1.close,
+                time: currentM1.openTime,
+                tickCount: currentM1.tickCount
+            };
+
+            m1Buffer.push(completedCandle);
+            if (m1Buffer.length > M1_BUFFER_SIZE) {
+                m1Buffer.shift();
+            }
+
+            // แจ้ง Engine ว่าแท่ง M1 ปิดแล้ว (เฉพาะแท่งที่มี tick เพียงพอ)
+            if (completedCandle.tickCount >= M1_MIN_TICK_COUNT) {
+                processM1Close(completedCandle).catch(err => {
+                    console.error('❌ processM1Close failed:', err.message);
+                });
+            } else {
+                console.log(`   ⚠️ [M1 Builder]: แท่ง M1 ปิดแล้ว แต่มี tick แค่ ${completedCandle.tickCount} (ต่ำกว่าขั้นต่ำ ${M1_MIN_TICK_COUNT}) → ข้าม`);
+            }
+        }
+
+        // เริ่มแท่งใหม่
+        currentM1 = {
+            open: price,
+            high: price,
+            low: price,
+            close: price,
+            openTime: new Date().toISOString(),
+            minuteKey: minuteKey,
+            tickCount: 1
+        };
+    } else {
+        // อัปเดตแท่งปัจจุบัน
+        currentM1.high = Math.max(currentM1.high, price);
+        currentM1.low = Math.min(currentM1.low, price);
+        currentM1.close = price;
+        currentM1.tickCount++;
+    }
+}
+
+function resetM1Builder() {
+    currentM1 = null;
+    console.log('🔄 [M1 Builder]: รีเซ็ตแท่ง M1 ที่ค้างอยู่ (WebSocket reconnect)');
+}
 
 function isSocketActive(ws) {
     return ws && ws.readyState !== WebSocket.CLOSED;
@@ -82,11 +150,15 @@ function startPriceStream() {
             processTickData(currentPrice).catch((error) => {
                 console.error('❌ Process tick failed:', error.message);
             });
+
+            // [M1 ChoCh] สร้างแท่ง M1 จาก tick data
+            aggregateM1Tick(currentPrice);
         }
     });
 
     ws.on('close', function close() {
         clearHeartbeat();
+        resetM1Builder(); // [M1 ChoCh] รีเซ็ตแท่ง M1 ที่ค้าง
 
         if (activeWs === ws) {
             activeWs = null;
