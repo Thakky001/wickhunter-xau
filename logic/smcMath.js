@@ -286,7 +286,9 @@ function checkChoCh(m5Candles, direction, paIndex = null) {
         let targetHigh = null;
         if (paIndex !== null && paIndex > 1) {
             // [SMC True ChoCh] หา Fractal High สุดท้าย "ก่อน" เกิด PA
-            for (let i = paIndex - 1; i >= 1; i--) {
+            // จำกัด window 15 แท่ง M5 (= 75 นาที) — ถ้าไกลกว่านี้ = คนละ swing แล้ว
+            const FRACTAL_WINDOW = 15;
+            for (let i = paIndex - 1; i >= Math.max(1, paIndex - FRACTAL_WINDOW); i--) {
                 const c = m5Candles[i];
                 if (c.high > m5Candles[i - 1].high && c.high > m5Candles[i + 1].high) {
                     targetHigh = c.high; // ใช้ Wick High
@@ -295,14 +297,8 @@ function checkChoCh(m5Candles, direction, paIndex = null) {
             }
         }
 
-        // Fallback: ถ้าหา Fractal ไม่เจอ ให้เอาราคาไส้เทียนสูงสุดในช่วง 20 แท่งก่อน PA
-        if (targetHigh === null) {
-            const searchEnd = paIndex !== null ? paIndex : m5Candles.length - 1;
-            const searchStart = Math.max(0, searchEnd - 20);
-            const prevCandles = m5Candles.slice(searchStart, searchEnd);
-            if (prevCandles.length === 0) return { isValid: false };
-            targetHigh = Math.max(...prevCandles.map(c => c.high));
-        }
+        // ❌ ไม่มี fallback → ถ้าหา Fractal ไม่เจอ = ไม่มีโครงสร้างให้เล่น → skip setup นี้
+        if (targetHigh === null) return { isValid: false };
 
         const breakMargin = 1.5; // เพิ่มจาก 0.3 → 1.5 pts (Gold spread เฉลี่ย 0.3-0.5 pts → 0.3 คือ noise)
 
@@ -330,7 +326,9 @@ function checkChoCh(m5Candles, direction, paIndex = null) {
         let targetLow = null;
         if (paIndex !== null && paIndex > 1) {
             // [SMC True ChoCh] หา Fractal Low สุดท้าย "ก่อน" เกิด PA
-            for (let i = paIndex - 1; i >= 1; i--) {
+            // จำกัด window 15 แท่ง M5 (= 75 นาที) — ถ้าไกลกว่านี้ = คนละ swing แล้ว
+            const FRACTAL_WINDOW = 15;
+            for (let i = paIndex - 1; i >= Math.max(1, paIndex - FRACTAL_WINDOW); i--) {
                 const c = m5Candles[i];
                 if (c.low < m5Candles[i - 1].low && c.low < m5Candles[i + 1].low) {
                     targetLow = c.low; // ใช้ Wick Low
@@ -339,14 +337,8 @@ function checkChoCh(m5Candles, direction, paIndex = null) {
             }
         }
 
-        // Fallback: ถ้าหา Fractal ไม่เจอ ให้เอาราคาไส้เทียนต่ำสุดในช่วง 20 แท่งก่อน PA
-        if (targetLow === null) {
-            const searchEnd = paIndex !== null ? paIndex : m5Candles.length - 1;
-            const searchStart = Math.max(0, searchEnd - 20);
-            const prevCandles = m5Candles.slice(searchStart, searchEnd);
-            if (prevCandles.length === 0) return { isValid: false };
-            targetLow = Math.min(...prevCandles.map(c => c.low));
-        }
+        // ❌ ไม่มี fallback → ถ้าหา Fractal ไม่เจอ = ไม่มีโครงสร้างให้เล่น → skip setup นี้
+        if (targetLow === null) return { isValid: false };
 
         const breakMargin = 1.5; // เพิ่มจาก 0.3 → 1.5 pts (Gold spread เฉลี่ย 0.3-0.5 pts → 0.3 คือ noise)
 
