@@ -1,5 +1,5 @@
 const { sendSignal } = require('../services/telegram');
-const { findFVG, findOrderBlock, checkPriceActionInZone, checkRecentPA, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep, checkM1ChochBreak } = require('./smcMath');
+const { findFVG, findOrderBlock, checkPriceActionInZone, checkRecentPA, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep, checkM1ChochBreak, checkM5BOS, findM5FVG } = require('./smcMath');
 const { getCandles } = require('../services/twelveData');
 const dashboardState = require('../services/dashboardState');
 const sheets = require('../services/sheets');
@@ -9,7 +9,8 @@ const STATES = {
     WAITING_WICK_BREAK: 'WAITING_WICK_BREAK',
     TRIGGERED: 'TRIGGERED',
     WAITING_CHOCH: 'WAITING_CHOCH',
-    MONITORING_TRADE: 'MONITORING_TRADE'
+    MONITORING_TRADE: 'MONITORING_TRADE',
+    SCANNING_CONTINUATION: 'SCANNING_CONTINUATION'  // [NEW] รอ pullback มาที่ M5 FVG หลัง BOS
 };
 
 let activeTrade = null; // เก็บข้อมูลไม้ที่กำลังทำงานอยู่
@@ -24,7 +25,11 @@ const ENGINE_CONFIG = {
     ENTRY_MODE: 'CANDLE_CLOSE',  // [Fix#2] สลับเป็น CANDLE_CLOSE เพื่อเข้าที่ราคาปิดแท่ง PA (ไม่ใช่ยอด High ที่เป็น Resistance)
     MAX_ZONE_AGE_HOURS: 48,      // กรองโซน H1 ย้อนหลังไม่เกิน 48 ชั่วโมง (2 วัน)
     CHOCH_M1_MARGIN: 2.0,        // [M1 ChoCh] margin สำหรับยืนยัน ChoCh ผ่านแท่ง M1 (สูงกว่า M5 1.5 เพราะ M1 มี noise มากกว่า)
-    CHOCH_WAIT_TIMEOUT_MS: 15 * 60 * 1000  // [M1 ChoCh] หมดเวลารอ ChoCh break จาก M1 (15 นาที)
+    CHOCH_WAIT_TIMEOUT_MS: 15 * 60 * 1000,  // [M1 ChoCh] หมดเวลารอ ChoCh break จาก M1 (15 นาที)
+    CONT_MAX_SL_POINTS: 10.0,             // [Continuation] SL cap สำหรับ Continuation (แคบกว่า Reversal เพราะ M5 FVG เล็กกว่า H1 Zone)
+    CONT_FVG_TIMEOUT_MS: 30 * 60 * 1000,  // [Continuation] 30 นาที timeout รอ pullback มาที่ FVG
+    CONT_TP1_RR: 2,                        // [Continuation] TP1 R:R ratio
+    CONT_TP2_RR: 4                         // [Continuation] TP2 R:R ratio (สูงกว่า Reversal เพราะ trend มี momentum)
 };
 
 const PRE_ALERT_TIMEOUT_MS = 15 * 60 * 1000;
@@ -47,6 +52,7 @@ let isCheckingWaitingGuard = false;
 let lastTradedCandleTime = null; // เก็บบันทึกเวลาของแท่ง M5 ที่เคยส่งสัญญาณไปแล้ว
 let isProcessingTick = false; // ล็อกป้องกัน tick หลายตัวประมวลผลพร้อมกัน (ป้องกันแจ้งเตือนซ้ำ)
 let pendingChoch = null;      // [M1 ChoCh] เก็บข้อมูล setup ที่รอ ChoCh break จาก M1
+let pendingContinuation = null; // [Continuation] เก็บข้อมูล BOS+FVG ที่รอ pullback
 
 function clearActiveSignal() {
     referenceWickPrice = 0;
@@ -56,6 +62,7 @@ function clearActiveSignal() {
     lastFallbackCheckAt = 0;
     activeTrade = null;
     pendingChoch = null;
+    pendingContinuation = null;
     dashboardState.update({ activeTrade: null });
 }
 
@@ -561,6 +568,167 @@ async function checkMarketLogic() {
             } else if (!foundValidSignal) {
                 console.log(`   ⏳ พบ PA แต่ยังไม่มีโซนผ่าน ChoCh → รอรอบหน้า (2 นาที)`);
             }
+
+            // ─── Continuation Scan: M5 BOS + FVG (เฉพาะ TREND mode เท่านั้น) ───────────────
+            if (!foundValidSignal && isTrending && currentState === STATES.SCANNING &&
+                !(lastTradedCandleTime && closedM5Candle.time === lastTradedCandleTime)) {
+
+                const bosDirection = htfTrend === 'BULLISH' ? 'BUY' : 'SELL';
+                const bosResult = checkM5BOS(closedM5Array, bosDirection);
+
+                if (bosResult.isValid) {
+                    console.log(`   🔄 [Continuation] พบ M5 BOS (${bosDirection}) | Fractal: ${bosResult.fractalPrice.toFixed(2)} → Break: ${bosResult.breakPrice.toFixed(2)}`);
+
+                    const fvgResult = findM5FVG(closedM5Array, bosResult.fractalIndex, bosResult.bosIndex, bosDirection);
+
+                    if (fvgResult.isValid) {
+                        const fvg = fvgResult.fvg;
+                        console.log(`   📦 [Continuation] พบ M5 FVG | ${fvg.bottom.toFixed(2)} - ${fvg.top.toFixed(2)}`);
+
+                        const fvgZone = {
+                            type: bosDirection === 'BUY' ? 'BUY_ZONE' : 'SELL_ZONE',
+                            top: fvg.top,
+                            bottom: fvg.bottom
+                        };
+                        // เช็ค PA rejection ใน FVG จากแท่ง M5 ปิดล่าสุด (pullback มา และ reject แล้ว)
+                        const paInFVG = checkPriceActionInZone(closedM5Candle, fvgZone, 0.7);
+
+                        if (paInFVG.isValid) {
+                            console.log(`   ✅ [Continuation] PA rejection ใน FVG ยืนยันทันที! คำนวณ Entry/SL/TP...`);
+                            const entryPrice = closedM5Candle.close;
+                            const sl = bosDirection === 'BUY'
+                                ? fvg.bottom - ENGINE_CONFIG.SL_BUFFER
+                                : fvg.top + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
+                            let risk = Math.abs(entryPrice - sl);
+
+                            if (risk > ENGINE_CONFIG.CONT_MAX_SL_POINTS) {
+                                console.log(`   🚫 [Continuation] SL กว้างเกินไป (${risk.toFixed(2)} pts > MAX ${ENGINE_CONFIG.CONT_MAX_SL_POINTS}) → skip`);
+                            } else {
+                                const minRisk = ENGINE_CONFIG.MIN_TP_POINTS / 2;
+                                if (risk < minRisk) risk = minRisk;
+
+                                const tp1Price = bosDirection === 'BUY' ? entryPrice + risk * ENGINE_CONFIG.CONT_TP1_RR : entryPrice - risk * ENGINE_CONFIG.CONT_TP1_RR;
+                                const tp2Price = bosDirection === 'BUY' ? entryPrice + risk * ENGINE_CONFIG.CONT_TP2_RR : entryPrice - risk * ENGINE_CONFIG.CONT_TP2_RR;
+
+                                signalDirection = bosDirection;
+                                referenceWickPrice = entryPrice;
+                                cancelPrice = sl;
+                                lastTradedCandleTime = closedM5Candle.time;
+                                currentState = STATES.TRIGGERED;
+                                waitingStartedAt = null;
+                                dashboardState.update({ botState: currentState });
+
+                                dashboardState.addSignal({ type: 'TRIGGERED', direction: bosDirection, entry: entryPrice, sl, tp1: tp1Price, tp2: tp2Price, currentPrice: entryPrice, time: new Date().toISOString() });
+                                sheets.appendSignal({ type: 'TRIGGERED', direction: bosDirection, entry: entryPrice, sl, tp1: tp1Price, tp2: tp2Price, currentPrice: entryPrice });
+
+                                const contMsg = `🚀 <b>WickHunter XAU | CONTINUATION SIGNAL</b> 🚀\n\n` +
+                                    `✅ <b>Direction:</b> ${bosDirection}\n` +
+                                    `✅ <b>Setup:</b> M5 BOS + FVG Retest (H4 ${htfTrend})\n\n` +
+                                    `📍 <b>Entry Price:</b> ${entryPrice.toFixed(2)}\n` +
+                                    `🛑 <b>Stop Loss:</b> ${sl.toFixed(2)} (${bosDirection === 'BUY' ? 'ใต้ FVG bottom' : 'เหนือ FVG top'})\n` +
+                                    `🎯 <b>TP 1 (RR 1:${ENGINE_CONFIG.CONT_TP1_RR}):</b> ${tp1Price.toFixed(2)}\n` +
+                                    `🎯 <b>TP 2 (RR 1:${ENGINE_CONFIG.CONT_TP2_RR}):</b> ${tp2Price.toFixed(2)}\n\n` +
+                                    `🚀 <b>Current Price:</b> ${entryPrice.toFixed(2)}`;
+
+                                await sendSignal(contMsg);
+                                activeTrade = { direction: bosDirection, entry: entryPrice, sl, tp1: tp1Price, tp2: tp2Price, isTp1Hit: false, time: new Date().toISOString() };
+                                currentState = STATES.MONITORING_TRADE;
+                                dashboardState.update({ botState: currentState, activeTrade });
+                                console.log(`🟢 [Continuation]: สัญญาณถูกส่งแล้ว! → MONITORING_TRADE`);
+                            }
+                        } else {
+                            // ยังไม่ pullback → เข้า SCANNING_CONTINUATION รอ
+                            pendingContinuation = { direction: bosDirection, fvg, bosIndex: bosResult.bosIndex, fractalPrice: bosResult.fractalPrice, startedAt: Date.now() };
+                            currentState = STATES.SCANNING_CONTINUATION;
+                            dashboardState.update({ botState: currentState });
+                            console.log(`   ⏳ [Continuation] BOS+FVG พบแล้ว แต่ราคายังไม่ pullback มาที่ FVG → SCANNING_CONTINUATION`);
+
+                            const preAlertMsg = `⏳ <b>เตรียมตัว! พบ M5 BOS + FVG (Continuation Setup)</b>\n\n` +
+                                `📊 ทิศทาง: <b>${bosDirection}</b> (ตาม H4 ${htfTrend})\n` +
+                                `📦 M5 FVG Zone: ${fvg.bottom.toFixed(2)} - ${fvg.top.toFixed(2)}\n\n` +
+                                `⏳ รอราคา pullback มาที่ FVG แล้วมี PA rejection\n` +
+                                `⏱️ หมดเวลาใน: ${ENGINE_CONFIG.CONT_FVG_TIMEOUT_MS / 60000} นาที`;
+                            await sendSignal(preAlertMsg);
+                        }
+                    } else {
+                        console.log(`   ❌ [Continuation] ไม่พบ M5 FVG ระหว่าง BOS impulse`);
+                    }
+                }
+            }
+            // ────────────────────────────────────────────────────────────────────
+        }
+
+        // ─── SCANNING_CONTINUATION: ตรวจสอบ PA rejection ใน M5 FVG ทุก 5 นาที ────────────────
+        else if (currentState === STATES.SCANNING_CONTINUATION && pendingContinuation) {
+            const m5ContCandles = await getCandles('5', 15);
+            if (!m5ContCandles || m5ContCandles.length < 2) {
+                console.log(`⚠️ [Continuation] ดึงข้อมูล M5 ไม่ได้ → ข้าม`);
+                return;
+            }
+
+            const closedM5Cont = m5ContCandles.slice(0, -1);
+            const latestContCandle = closedM5Cont[closedM5Cont.length - 1];
+            const { direction: contDir, fvg: contFvg } = pendingContinuation;
+            const fvgZone = { type: contDir === 'BUY' ? 'BUY_ZONE' : 'SELL_ZONE', top: contFvg.top, bottom: contFvg.bottom };
+
+            const nowTime = new Date().toLocaleTimeString('th-TH');
+            console.log(`\n─────────────────────────────────────────`);
+            console.log(`🔍 [CONT SCAN] ${nowTime} | State: SCANNING_CONTINUATION`);
+            console.log(`   📦 FVG Zone: ${contFvg.bottom.toFixed(2)} - ${contFvg.top.toFixed(2)} | Direction: ${contDir}`);
+            console.log(`   📓 M5 ล่าสุด | H:${latestContCandle.high.toFixed(2)} L:${latestContCandle.low.toFixed(2)} C:${latestContCandle.close.toFixed(2)}`);
+
+            const paInFVG = checkPriceActionInZone(latestContCandle, fvgZone, 0.7);
+
+            if (paInFVG.isValid) {
+                console.log(`   ✅ [Continuation] PA Rejection ใน FVG ยืนยัน! → คำนวณ Entry...`);
+                const entryPrice = latestContCandle.close;
+                const sl = contDir === 'BUY'
+                    ? contFvg.bottom - ENGINE_CONFIG.SL_BUFFER
+                    : contFvg.top + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
+                let risk = Math.abs(entryPrice - sl);
+
+                if (risk > ENGINE_CONFIG.CONT_MAX_SL_POINTS) {
+                    console.log(`   🚫 [Continuation] SL กว้างเกินไป (${risk.toFixed(2)} pts) → กลับ SCANNING`);
+                    currentState = STATES.SCANNING;
+                    clearActiveSignal();
+                    dashboardState.update({ botState: currentState });
+                } else {
+                    const minRisk = ENGINE_CONFIG.MIN_TP_POINTS / 2;
+                    if (risk < minRisk) risk = minRisk;
+
+                    const tp1Price = contDir === 'BUY' ? entryPrice + risk * ENGINE_CONFIG.CONT_TP1_RR : entryPrice - risk * ENGINE_CONFIG.CONT_TP1_RR;
+                    const tp2Price = contDir === 'BUY' ? entryPrice + risk * ENGINE_CONFIG.CONT_TP2_RR : entryPrice - risk * ENGINE_CONFIG.CONT_TP2_RR;
+
+                    signalDirection = contDir;
+                    referenceWickPrice = entryPrice;
+                    cancelPrice = sl;
+                    lastTradedCandleTime = latestContCandle.time;
+                    currentState = STATES.TRIGGERED;
+                    waitingStartedAt = null;
+                    dashboardState.update({ botState: currentState });
+
+                    dashboardState.addSignal({ type: 'TRIGGERED', direction: contDir, entry: entryPrice, sl, tp1: tp1Price, tp2: tp2Price, currentPrice: entryPrice, time: new Date().toISOString() });
+                    sheets.appendSignal({ type: 'TRIGGERED', direction: contDir, entry: entryPrice, sl, tp1: tp1Price, tp2: tp2Price, currentPrice: entryPrice });
+
+                    const contMsg = `🚀 <b>WickHunter XAU | CONTINUATION SIGNAL</b> 🚀\n\n` +
+                        `✅ <b>Direction:</b> ${contDir}\n` +
+                        `✅ <b>Setup:</b> M5 BOS + FVG Retest ยืนยัน!\n\n` +
+                        `📍 <b>Entry Price:</b> ${entryPrice.toFixed(2)}\n` +
+                        `🛑 <b>Stop Loss:</b> ${sl.toFixed(2)} (${contDir === 'BUY' ? 'ใต้ FVG bottom' : 'เหนือ FVG top'})\n` +
+                        `🎯 <b>TP 1 (RR 1:${ENGINE_CONFIG.CONT_TP1_RR}):</b> ${tp1Price.toFixed(2)}\n` +
+                        `🎯 <b>TP 2 (RR 1:${ENGINE_CONFIG.CONT_TP2_RR}):</b> ${tp2Price.toFixed(2)}\n\n` +
+                        `🚀 <b>Current Price:</b> ${entryPrice.toFixed(2)}`;
+
+                    await sendSignal(contMsg);
+                    activeTrade = { direction: contDir, entry: entryPrice, sl, tp1: tp1Price, tp2: tp2Price, isTp1Hit: false, time: new Date().toISOString() };
+                    pendingContinuation = null;
+                    currentState = STATES.MONITORING_TRADE;
+                    dashboardState.update({ botState: currentState, activeTrade });
+                    console.log(`🟢 [Continuation]: TRIGGERED! → MONITORING_TRADE`);
+                }
+            } else {
+                console.log(`   ⏳ [Continuation] ยังไม่มี PA rejection ใน FVG → รอ M5 ถัดไป`);
+            }
             console.log(`─────────────────────────────────────────`);
         }
     } catch (error) {
@@ -644,7 +812,8 @@ async function expireWaitingChoch() {
 }
 
 async function checkWaitingGuard() {
-    if ((currentState !== STATES.WAITING_WICK_BREAK && currentState !== STATES.WAITING_CHOCH && currentState !== STATES.MONITORING_TRADE) || isCheckingWaitingGuard) return;
+    if ((currentState !== STATES.WAITING_WICK_BREAK && currentState !== STATES.WAITING_CHOCH &&
+         currentState !== STATES.MONITORING_TRADE && currentState !== STATES.SCANNING_CONTINUATION) || isCheckingWaitingGuard) return;
 
     const now = Date.now();
     if (currentState === STATES.WAITING_WICK_BREAK && waitingStartedAt && now - waitingStartedAt >= PRE_ALERT_TIMEOUT_MS) {
@@ -672,7 +841,26 @@ async function checkWaitingGuard() {
         return;
     }
 
-    if (now - lastTickAt < TICK_STALE_MS) return;
+    // [Continuation] Timeout สำหรับ SCANNING_CONTINUATION
+    if (currentState === STATES.SCANNING_CONTINUATION && pendingContinuation &&
+        now - pendingContinuation.startedAt >= ENGINE_CONFIG.CONT_FVG_TIMEOUT_MS) {
+        isCheckingWaitingGuard = true;
+        try {
+            const contDir = pendingContinuation.direction;
+            const contFvg = pendingContinuation.fvg;
+            currentState = STATES.SCANNING;
+            clearActiveSignal();
+            dashboardState.update({ botState: currentState });
+            console.log(`⌛ [Continuation] FVG Retest timeout (${ENGINE_CONFIG.CONT_FVG_TIMEOUT_MS / 60000} นาที) → กลับ SCANNING`);
+            await sendSignal(`⌛ <b>หมดเวลา Continuation ${contDir}</b>\n\nรอ pullback มาที่ FVG (${contFvg.bottom.toFixed(2)}-${contFvg.top.toFixed(2)}) นานเกิน ${ENGINE_CONFIG.CONT_FVG_TIMEOUT_MS / 60000} นาที\nระบบกลับสู่โหมดสแกนใหม่...`);
+        } catch (error) {
+            console.error("❌ [SMC Engine Error] expireContinuation failed:", error);
+        } finally {
+            isCheckingWaitingGuard = false;
+        }
+        return;
+    }
+
     if (now - lastFallbackCheckAt < FALLBACK_CHECK_COOLDOWN_MS) return;
 
     isCheckingWaitingGuard = true;
@@ -926,6 +1114,29 @@ async function processTickData(currentPrice, source = 'tick') {
 
                 const sourceNote = source === 'fallback' ? '\n\n⚠️ ตรวจพบจาก TwelveData fallback' : '';
                 await sendSignal(`❌ <b>ยกเลิกการรอ ChoCh ${invalidDir}</b>\n\nกราฟผิดทาง ทะลุจุด SL ที่ <b>${invalidSL.toFixed(2)}</b> ก่อนการทำลายโครงสร้าง ChoCh ระบบกลับสู่โหมดสแกนหาโซนใหม่...${sourceNote}`);
+                return;
+            }
+        }
+
+        // [Continuation] ตรวจสอบ FVG Invalidation จาก tick ระหว่างรอ M5 scan
+        if (currentState === STATES.SCANNING_CONTINUATION && pendingContinuation) {
+            const { direction: contDir, fvg: contFvg } = pendingContinuation;
+            const FVG_BREACH_BUFFER = 0.5; // ยอม spike เล็กน้อย แต่ถ้าทะลุ 0.5+ USD = invalidate
+
+            if (contDir === 'BUY' && price < (contFvg.bottom - FVG_BREACH_BUFFER)) {
+                console.log(`❌ [Continuation] ราคาทะลุ FVG bottom (${contFvg.bottom.toFixed(2)}) → Invalidate`);
+                currentState = STATES.SCANNING;
+                clearActiveSignal();
+                dashboardState.update({ botState: currentState });
+                await sendSignal(`❌ <b>ยกเลิก Continuation BUY</b>\n\nราคาทะลุ FVG bottom ที่ ${contFvg.bottom.toFixed(2)}\nระบบกลับไปสแกนใหม่...`);
+                return;
+            }
+            if (contDir === 'SELL' && price > (contFvg.top + FVG_BREACH_BUFFER)) {
+                console.log(`❌ [Continuation] ราคาทะลุ FVG top (${contFvg.top.toFixed(2)}) → Invalidate`);
+                currentState = STATES.SCANNING;
+                clearActiveSignal();
+                dashboardState.update({ botState: currentState });
+                await sendSignal(`❌ <b>ยกเลิก Continuation SELL</b>\n\nราคาทะลุ FVG top ที่ ${contFvg.top.toFixed(2)}\nระบบกลับไปสแกนใหม่...`);
                 return;
             }
         }

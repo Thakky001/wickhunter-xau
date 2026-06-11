@@ -504,4 +504,111 @@ function checkM1ChochBreak(m1Close, direction, targetPrice, margin = 2.0) {
     return false;
 }
 
-module.exports = { findFVG, findOrderBlock, checkPriceActionInZone, checkRecentPA, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep, checkM1ChochBreak };
+// ─── M5 BOS Detection (Continuation Setup) ───────────────────────────────────
+// ตรวจหา Break of Structure (BOS) บน M5 ตาม trend — ใช้สำหรับ Continuation Setup
+// ต่างจาก ChoCh: BOS = ทะลุ swing ตาม trend (ไม่ใช่สวนทาง)
+function checkM5BOS(m5Candles, direction, lookback = 20) {
+    if (m5Candles.length < 10) return { isValid: false };
+
+    const BOS_MARGIN = 0.3; // margin ป้องกัน noise (0.3 USD = 30 จุด)
+
+    if (direction === 'BUY') {
+        let fractalHigh = null;
+        let fractalIndex = null;
+        const searchStart = Math.max(1, m5Candles.length - lookback);
+        for (let i = m5Candles.length - 3; i >= searchStart; i--) {
+            const c = m5Candles[i];
+            if (c.high > m5Candles[i - 1].high && c.high > m5Candles[i + 1].high) {
+                fractalHigh = c.high;
+                fractalIndex = i;
+                break;
+            }
+        }
+        if (fractalHigh === null) return { isValid: false };
+
+        // หาแท่งที่ปิดเหนือ fractalHigh (BOS) — ต้องสด (ไม่เกิน 5 แท่งจากล่าสุด)
+        for (let i = fractalIndex + 2; i < m5Candles.length; i++) {
+            if (m5Candles[i].close > (fractalHigh + BOS_MARGIN)) {
+                if (i >= m5Candles.length - 5) {
+                    return { isValid: true, bosIndex: i, fractalIndex, fractalPrice: fractalHigh, breakPrice: m5Candles[i].close, direction: 'BUY' };
+                }
+                return { isValid: false }; // BOS เกิดนานแล้ว (stale)
+            }
+        }
+        return { isValid: false };
+    }
+
+    if (direction === 'SELL') {
+        let fractalLow = null;
+        let fractalIndex = null;
+        const searchStart = Math.max(1, m5Candles.length - lookback);
+        for (let i = m5Candles.length - 3; i >= searchStart; i--) {
+            const c = m5Candles[i];
+            if (c.low < m5Candles[i - 1].low && c.low < m5Candles[i + 1].low) {
+                fractalLow = c.low;
+                fractalIndex = i;
+                break;
+            }
+        }
+        if (fractalLow === null) return { isValid: false };
+
+        for (let i = fractalIndex + 2; i < m5Candles.length; i++) {
+            if (m5Candles[i].close < (fractalLow - BOS_MARGIN)) {
+                if (i >= m5Candles.length - 5) {
+                    return { isValid: true, bosIndex: i, fractalIndex, fractalPrice: fractalLow, breakPrice: m5Candles[i].close, direction: 'SELL' };
+                }
+                return { isValid: false };
+            }
+        }
+        return { isValid: false };
+    }
+
+    return { isValid: false };
+}
+
+// ─── M5 FVG Finder (ระหว่าง BOS Impulse Move) ─────────────────────────────────
+// หา FVG ที่เกิดขึ้นระหว่าง BOS impulse (scanStart → scanEnd)
+// ต่างจาก findFVG (H1): ไม่บังคับ displacement, ขนาดเล็กกว่า (0.8 USD)
+const MIN_M5_FVG_SIZE = 0.8; // 0.8 USD = 80 จุด
+
+function findM5FVG(m5Candles, scanStart, scanEnd, direction) {
+    const fvgs = [];
+    const start = Math.max(2, scanStart);
+    const end = Math.min(scanEnd, m5Candles.length - 1);
+
+    for (let i = start; i <= end; i++) {
+        const c1 = m5Candles[i - 2];
+        const c3 = m5Candles[i];
+
+        if (direction === 'BUY') {
+            // Bullish FVG: gap ระหว่าง c1.high กับ c3.low (gap ขาขึ้น)
+            if (c3.low > c1.high && (c3.low - c1.high) >= MIN_M5_FVG_SIZE) {
+                const midpoint = (c1.high + c3.low) / 2;
+                let mitigated = false;
+                for (let j = i + 1; j < m5Candles.length; j++) {
+                    if (Math.min(m5Candles[j].open, m5Candles[j].close) <= midpoint) { mitigated = true; break; }
+                }
+                if (!mitigated) fvgs.push({ top: c3.low, bottom: c1.high, index: i, midpoint });
+            }
+        } else {
+            // Bearish FVG: gap ระหว่าง c1.low กับ c3.high (gap ขาลง)
+            if (c3.high < c1.low && (c1.low - c3.high) >= MIN_M5_FVG_SIZE) {
+                const midpoint = (c1.low + c3.high) / 2;
+                let mitigated = false;
+                for (let j = i + 1; j < m5Candles.length; j++) {
+                    if (Math.max(m5Candles[j].open, m5Candles[j].close) >= midpoint) { mitigated = true; break; }
+                }
+                if (!mitigated) fvgs.push({ top: c1.low, bottom: c3.high, index: i, midpoint });
+            }
+        }
+    }
+
+    if (fvgs.length === 0) return { isValid: false };
+
+    // เลือก FVG ที่ใกล้ราคาปัจจุบันที่สุด (มีโอกาส retest สูงสุด)
+    const lastPrice = m5Candles[m5Candles.length - 1].close;
+    fvgs.sort((a, b) => Math.abs(lastPrice - a.midpoint) - Math.abs(lastPrice - b.midpoint));
+    return { isValid: true, fvg: fvgs[0] };
+}
+
+module.exports = { findFVG, findOrderBlock, checkPriceActionInZone, checkRecentPA, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep, checkM1ChochBreak, checkM5BOS, findM5FVG };

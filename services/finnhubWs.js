@@ -20,13 +20,14 @@ const M1_MIN_TICK_COUNT = 5;  // จำนวน tick ขั้นต่ำเ�
 let currentM1 = null;
 let m1Buffer = [];
 
-function getMinuteKey() {
-    const now = new Date();
-    return now.getUTCHours() * 60 + now.getUTCMinutes();
+function getMinuteKey(timestampMs) {
+    const d = timestampMs ? new Date(timestampMs) : new Date();
+    return d.getUTCHours() * 60 + d.getUTCMinutes();
 }
 
-function aggregateM1Tick(price) {
-    const minuteKey = getMinuteKey();
+function aggregateM1Tick(price, timestampMs) {
+    const minuteKey = getMinuteKey(timestampMs);
+    const tickTime = timestampMs ? new Date(timestampMs).toISOString() : new Date().toISOString();
 
     if (!currentM1 || currentM1.minuteKey !== minuteKey) {
         // นาทีเปลี่ยน → แท่ง M1 ก่อนหน้าปิดแล้ว
@@ -61,7 +62,7 @@ function aggregateM1Tick(price) {
             high: price,
             low: price,
             close: price,
-            openTime: new Date().toISOString(),
+            openTime: tickTime,
             minuteKey: minuteKey,
             tickCount: 1
         };
@@ -144,15 +145,21 @@ function startPriceStream() {
             return;
         }
 
-        if (response.type === 'trade') {
-            const currentPrice = response?.data?.[0]?.p;
-            if (!currentPrice) return;
-            processTickData(currentPrice).catch((error) => {
-                console.error('❌ Process tick failed:', error.message);
-            });
+        if (response.type === 'trade' && Array.isArray(response.data)) {
+            // [Bug Fix] Finnhub มักจะส่งข้อมูลมาเป็น batch (หลาย tick ใน array เดียว)
+            // เดิมทีอ่านแค่ data[0] ทำให้เสีย tick ไปจำนวนมาก และ tickCount ไม่ถึงขั้นต่ำ
+            response.data.forEach(tick => {
+                const currentPrice = tick.p;
+                const tickTimeMs = tick.t;
+                if (!currentPrice) return;
 
-            // [M1 ChoCh] สร้างแท่ง M1 จาก tick data
-            aggregateM1Tick(currentPrice);
+                processTickData(currentPrice).catch((error) => {
+                    console.error('❌ Process tick failed:', error.message);
+                });
+
+                // [M1 ChoCh] สร้างแท่ง M1 จาก tick data โดยใช้ timestamp จริงจาก Finnhub
+                aggregateM1Tick(currentPrice, tickTimeMs);
+            });
         }
     });
 
