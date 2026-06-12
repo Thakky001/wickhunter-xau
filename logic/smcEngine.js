@@ -3,6 +3,7 @@ const { findFVG, findOrderBlock, checkPriceActionInZone, checkRecentPA, checkCho
 const { getCandles } = require('../services/twelveData');
 const dashboardState = require('../services/dashboardState');
 const sheets = require('../services/sheets');
+const { isWsConnected } = require('./finnhubWs');
 
 const STATES = {
     SCANNING: 'SCANNING',
@@ -146,7 +147,7 @@ async function checkMarketLogic() {
 
             // ─── Dynamic Filter: กำหนด Mode ตาม HTF Trend ──────────────────────────
             const isTrending = (htfTrend === 'BULLISH' || htfTrend === 'BEARISH');
-            const depthPct   = isTrending ? 0.7 : 0.3;   // [Fix#2] TREND=70% (เพิ่มจาก 50%), STRICT=30%
+            const depthPct = isTrending ? 0.7 : 0.3;   // [Fix#2] TREND=70% (เพิ่มจาก 50%), STRICT=30%
             const filterMode = isTrending ? 'TREND_FOLLOWING' : 'STRICT';
             // ────────────────────────────────────────────────────────────────────────
 
@@ -160,7 +161,7 @@ async function checkMarketLogic() {
             if (tradingRange) {
                 console.log(`   📐 [Midpoint] Median Close 24H: ${tradingRange.midpoint.toFixed(2)} | Range: ${tradingRange.low.toFixed(2)} - ${tradingRange.high.toFixed(2)}`);
             }
-            console.log(`   📈 [HTF Trend H4]: ${htfTrend} → [${filterMode}] depth: ${depthPct*100}%, IDM: ${isTrending ? 'ไม่บังคับ' : 'บังคับ'}`);
+            console.log(`   📈 [HTF Trend H4]: ${htfTrend} → [${filterMode}] depth: ${depthPct * 100}%, IDM: ${isTrending ? 'ไม่บังคับ' : 'บังคับ'}`);
             console.log(`   🕯️  M5 แท่งปิดล่าสุด | O:${closedM5Candle.open.toFixed(2)} H:${closedM5Candle.high.toFixed(2)} L:${closedM5Candle.low.toFixed(2)} C:${closedM5Candle.close.toFixed(2)}`);
             if (allZones.length > 0) {
                 allZones.forEach((z, idx) => {
@@ -815,7 +816,7 @@ async function expireWaitingChoch() {
 
 async function checkWaitingGuard() {
     if ((currentState !== STATES.WAITING_WICK_BREAK && currentState !== STATES.WAITING_CHOCH &&
-         currentState !== STATES.MONITORING_TRADE && currentState !== STATES.SCANNING_CONTINUATION) || isCheckingWaitingGuard) return;
+        currentState !== STATES.MONITORING_TRADE && currentState !== STATES.SCANNING_CONTINUATION) || isCheckingWaitingGuard) return;
 
     const now = Date.now();
     if (currentState === STATES.WAITING_WICK_BREAK && waitingStartedAt && now - waitingStartedAt >= PRE_ALERT_TIMEOUT_MS) {
@@ -864,9 +865,10 @@ async function checkWaitingGuard() {
     }
 
     if (now - lastFallbackCheckAt < FALLBACK_CHECK_COOLDOWN_MS) return;
+    if (isWsConnected()) return; // ← return ตรงนี้
 
     isCheckingWaitingGuard = true;
-    lastFallbackCheckAt = now;
+    lastFallbackCheckAt = now; // ← ไม่ถูก set เมื่อ WS active
     try {
         console.log("🛰️ [SMC Engine]: Finnhub tick ขาดช่วง → เช็ก M5 จาก TwelveData fallback");
         const m5Candles = await getCandles('5', 2);

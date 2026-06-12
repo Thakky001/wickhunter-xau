@@ -188,4 +188,7 @@ function startPriceStream() {
     });
 }
 
-module.exports = { startPriceStream };
+function isWsConnected() {
+    return activeWs && activeWs.readyState === WebSocket.OPEN;
+}
+module.exports = { startPriceStream, isWsConnected };
