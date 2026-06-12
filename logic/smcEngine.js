@@ -25,7 +25,7 @@ const ENGINE_CONFIG = {
     ENTRY_MODE: 'CANDLE_CLOSE',  // [Fix#2] สลับเป็น CANDLE_CLOSE เพื่อเข้าที่ราคาปิดแท่ง PA (ไม่ใช่ยอด High ที่เป็น Resistance)
     MAX_ZONE_AGE_HOURS: 48,      // กรองโซน H1 ย้อนหลังไม่เกิน 48 ชั่วโมง (2 วัน)
     CHOCH_M1_MARGIN: 2.0,        // [M1 ChoCh] margin สำหรับยืนยัน ChoCh ผ่านแท่ง M1 (สูงกว่า M5 1.5 เพราะ M1 มี noise มากกว่า)
-    CHOCH_WAIT_TIMEOUT_MS: 15 * 60 * 1000,  // [M1 ChoCh] หมดเวลารอ ChoCh break จาก M1 (15 นาที)
+    CHOCH_WAIT_TIMEOUT_MS: 45 * 60 * 1000,  // [M1 ChoCh] หมดเวลารอ ChoCh break จาก M1 (45 นาที)
     CONT_MAX_SL_POINTS: 10.0,             // [Continuation] SL cap สำหรับ Continuation (แคบกว่า Reversal เพราะ M5 FVG เล็กกว่า H1 Zone)
     CONT_FVG_TIMEOUT_MS: 30 * 60 * 1000,  // [Continuation] 30 นาที timeout รอ pullback มาที่ FVG
     CONT_TP1_RR: 2,                        // [Continuation] TP1 R:R ratio
