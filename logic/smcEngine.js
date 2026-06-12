@@ -1,7 +1,6 @@
 const { sendSignal } = require('../services/telegram');
 const { findFVG, findOrderBlock, checkPriceActionInZone, checkRecentPA, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep, checkM1ChochBreak, checkM5BOS, findM5FVG } = require('./smcMath');
 const { getCandles } = require('../services/twelveData');
-const { isWsConnected } = require('../services/finnhubWs');
 const dashboardState = require('../services/dashboardState');
 const sheets = require('../services/sheets');
 
@@ -866,7 +865,7 @@ async function checkWaitingGuard() {
 
     if (now - lastFallbackCheckAt < FALLBACK_CHECK_COOLDOWN_MS) return;
 
-    if (isWsConnected()) return; // WS active อยู่ → ไม่ต้องทำ fallback
+    if (dashboardState.state.wsStatus === 'CONNECTED') return; // WS active อยู่ → ไม่ต้องทำ fallback
 
     isCheckingWaitingGuard = true;
     lastFallbackCheckAt = now;

@@ -188,9 +188,4 @@ function startPriceStream() {
     });
 }
 
-function isWsConnected() {
-    // Return true if WebSocket is defined and OPEN
-    return activeWs && activeWs.readyState === WebSocket.OPEN;
-}
-
-module.exports = { startPriceStream, isWsConnected };
+module.exports = { startPriceStream };
