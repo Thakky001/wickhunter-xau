@@ -354,12 +354,14 @@ async function checkMarketLogic() {
                                 const recentCandles = closedM5Array.slice(pIndex, entryIndex + 1);
                                 if (paResult.direction === 'BUY') {
                                     const swingLow = Math.min(...recentCandles.map(c => c.low));
-                                    // ใช้ swingLow เพียวๆ ตามหลัก SMC ป้องกัน SL กว้างเกินไปในโซนใหญ่
-                                    preCalcSL = swingLow - ENGINE_CONFIG.SL_BUFFER;
+                                    const zoneEdgeSL = paResult.cancelPrice - ENGINE_CONFIG.SL_BUFFER; // zone.bottom - buffer
+                                    // [Fix#1 Hybrid] ใช้ตัวที่ไกลกว่า (ปลอดภัยกว่า) ระหว่าง swing กับ zone edge
+                                    preCalcSL = Math.min(swingLow - ENGINE_CONFIG.SL_BUFFER, zoneEdgeSL);
                                 } else {
                                     const swingHigh = Math.max(...recentCandles.map(c => c.high));
-                                    // ใช้ swingHigh เพียวๆ ตามหลัก SMC
-                                    preCalcSL = swingHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
+                                    const zoneEdgeSL = paResult.cancelPrice + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER; // zone.top + buffer
+                                    // [Fix#1 Hybrid] ใช้ตัวที่ไกลกว่า (ปลอดภัยกว่า) ระหว่าง swing กับ zone edge
+                                    preCalcSL = Math.max(swingHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER, zoneEdgeSL);
                                 }
                             } else {
                                 preCalcSL = paResult.direction === 'BUY'
@@ -431,12 +433,14 @@ async function checkMarketLogic() {
                                 const recentCandles = closedM5Array.slice(pIndex, entryIndex + 1);
                                 if (signalDirection === 'BUY') {
                                     const swingLow = Math.min(...recentCandles.map(c => c.low));
-                                    // ใช้ swingLow เพียวๆ ตามหลัก SMC ป้องกัน SL กว้างเกินไปในโซนใหญ่
-                                    cancelPrice = swingLow - ENGINE_CONFIG.SL_BUFFER;
+                                    const zoneEdgeSL = paResult.cancelPrice - ENGINE_CONFIG.SL_BUFFER; // zone.bottom - buffer
+                                    // [Fix#1 Hybrid] ใช้ตัวที่ไกลกว่า (ปลอดภัยกว่า) ระหว่าง swing กับ zone edge
+                                    cancelPrice = Math.min(swingLow - ENGINE_CONFIG.SL_BUFFER, zoneEdgeSL);
                                 } else {
                                     const swingHigh = Math.max(...recentCandles.map(c => c.high));
-                                    // ใช้ swingHigh เพียวๆ ตามหลัก SMC
-                                    cancelPrice = swingHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
+                                    const zoneEdgeSL = paResult.cancelPrice + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER; // zone.top + buffer
+                                    // [Fix#1 Hybrid] ใช้ตัวที่ไกลกว่า (ปลอดภัยกว่า) ระหว่าง swing กับ zone edge
+                                    cancelPrice = Math.max(swingHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER, zoneEdgeSL);
                                 }
                             } else {
                                 // [Bug#3 Fix] CANDLE_CLOSE mode ต้องใช้ PA_WICK เสมอ
@@ -533,12 +537,14 @@ async function checkMarketLogic() {
                             const recentCandles = closedM5Array.slice(pIndex, entryIndex + 1);
                             if (signalDirection === 'BUY') {
                                 const swingLow = Math.min(...recentCandles.map(c => c.low));
-                                // ใช้ swingLow เพียวๆ ตามหลัก SMC ป้องกัน SL กว้างเกินไปในโซนใหญ่
-                                cancelPrice = swingLow - ENGINE_CONFIG.SL_BUFFER;
+                                const zoneEdgeSL = paResult.cancelPrice - ENGINE_CONFIG.SL_BUFFER; // zone.bottom - buffer
+                                // [Fix#1 Hybrid] ใช้ตัวที่ไกลกว่า (ปลอดภัยกว่า) ระหว่าง swing กับ zone edge
+                                cancelPrice = Math.min(swingLow - ENGINE_CONFIG.SL_BUFFER, zoneEdgeSL);
                             } else {
                                 const swingHigh = Math.max(...recentCandles.map(c => c.high));
-                                // ใช้ swingHigh เพียวๆ ตามหลัก SMC
-                                cancelPrice = swingHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
+                                const zoneEdgeSL = paResult.cancelPrice + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER; // zone.top + buffer
+                                // [Fix#1 Hybrid] ใช้ตัวที่ไกลกว่า (ปลอดภัยกว่า) ระหว่าง swing กับ zone edge
+                                cancelPrice = Math.max(swingHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER, zoneEdgeSL);
                             }
                         } else if (ENGINE_CONFIG.SL_MODE === 'PA_WICK') {
                             cancelPrice = signalDirection === 'BUY'
