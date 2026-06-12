@@ -52,6 +52,27 @@ app.post('/force-scan', async (req, res) => {
     }
 });
 
+// Get current engine configuration
+app.get('/api/config', (req, res) => {
+    const { ENGINE_CONFIG } = require('./logic/smcEngine');
+    res.json({
+        USE_H4_FILTER: ENGINE_CONFIG.USE_H4_FILTER,
+        USE_TRAILING_STOP: ENGINE_CONFIG.USE_TRAILING_STOP,
+        USE_CE_ENTRY: ENGINE_CONFIG.USE_CE_ENTRY
+    });
+});
+
+// Update engine configuration
+app.post('/api/config', express.json(), (req, res) => {
+    const { updateConfig } = require('./logic/smcEngine');
+    try {
+        updateConfig(req.body);
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // Broadcast state updates to all SSE clients
 dashboardState.emitter.on('stateUpdate', (state) => {
     const payload = `data: ${JSON.stringify(state)}\n\n`;

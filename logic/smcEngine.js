@@ -29,7 +29,10 @@ const ENGINE_CONFIG = {
     CONT_MAX_SL_POINTS: 10.0,             // [Continuation] SL cap สำหรับ Continuation (แคบกว่า Reversal เพราะ M5 FVG เล็กกว่า H1 Zone)
     CONT_FVG_TIMEOUT_MS: 30 * 60 * 1000,  // [Continuation] 30 นาที timeout รอ pullback มาที่ FVG
     CONT_TP1_RR: 2,                        // [Continuation] TP1 R:R ratio
-    CONT_TP2_RR: 4                         // [Continuation] TP2 R:R ratio (สูงกว่า Reversal เพราะ trend มี momentum)
+    CONT_TP2_RR: 4,                        // [Continuation] TP2 R:R ratio (สูงกว่า Reversal เพราะ trend มี momentum)
+    USE_H4_FILTER: true,                   // [NEW] Toggle for H4 Trend Alignment (โหมดเทรดกองทุน)
+    USE_TRAILING_STOP: true,               // [NEW] Toggle for Partial TP 50% & Trailing Stop
+    USE_CE_ENTRY: true                     // [NEW] Toggle for Consequent Encroachment (50% deep entry)
 };
 
 const PRE_ALERT_TIMEOUT_MS = 15 * 60 * 1000;
@@ -142,11 +145,40 @@ async function checkMarketLogic() {
 
             // [HTF Filter] คำนวณทิศทาง H4 จาก H1 ที่มีอยู่แล้ว ไม่ใช้ API เพิ่ม
             const htfTrend = getHTFTrend(closedH1Candles);
+
+            let h4Candles = [];
+            let currentH4 = null;
+            for (let h1 of closedH1Candles) {
+                if (!h1.time) continue;
+                const d = new Date(h1.time);
+                const h4Block = Math.floor(d.getUTCHours() / 4) * 4;
+                const key = `${d.getUTCDate()}-${h4Block}`;
+
+                if (!currentH4 || currentH4.key !== key) {
+                    if (currentH4) h4Candles.push(currentH4);
+                    currentH4 = {
+                        key: key,
+                        time: new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), h4Block, 0, 0)).toISOString(),
+                        open: h1.open,
+                        high: h1.high,
+                        low: h1.low,
+                        close: h1.close
+                    };
+                } else {
+                    currentH4.high = Math.max(currentH4.high, h1.high);
+                    currentH4.low = Math.min(currentH4.low, h1.low);
+                    currentH4.close = h1.close;
+                }
+            }
+            if (currentH4) h4Candles.push(currentH4);
+
+            const h4Trend = ENGINE_CONFIG.USE_H4_FILTER ? getHTFTrend(h4Candles) : null;
+
             const tradingRange = getTradingRange(closedH1Candles);
 
             // ─── Dynamic Filter: กำหนด Mode ตาม HTF Trend ──────────────────────────
             const isTrending = (htfTrend === 'BULLISH' || htfTrend === 'BEARISH');
-            const depthPct = isTrending ? 0.7 : 0.3;   // [Fix#2] TREND=70% (เพิ่มจาก 50%), STRICT=30%
+            const depthPct = isTrending ? (ENGINE_CONFIG.USE_CE_ENTRY ? 0.5 : 0.7) : 0.3;
             const filterMode = isTrending ? 'TREND_FOLLOWING' : 'STRICT';
             // ────────────────────────────────────────────────────────────────────────
 
@@ -212,12 +244,23 @@ async function checkMarketLogic() {
                     */
 
                     // [HTF Filter] ข้ามโซนที่สวนทางกับ HTF Trend
+                    if (ENGINE_CONFIG.USE_H4_FILTER && h4Trend) {
+                        if (h4Trend === 'BEARISH' && zone.type === 'BUY_ZONE') {
+                            console.log(`   🚫 [H4] ข้าม ${zone.name} เพราะ H4 Bearish → ห้าม BUY`);
+                            continue;
+                        }
+                        if (h4Trend === 'BULLISH' && zone.type === 'SELL_ZONE') {
+                            console.log(`   🚫 [H4] ข้าม ${zone.name} เพราะ H4 Bullish → ห้าม SELL`);
+                            continue;
+                        }
+                    }
+
                     if (htfTrend === 'BEARISH' && zone.type === 'BUY_ZONE') {
-                        console.log(`   🚫 [HTF] ข้าม ${zone.name} เพราะ H4 Bearish → ห้าม BUY`);
+                        console.log(`   🚫 [H1] ข้าม ${zone.name} เพราะ H1 Bearish → ห้าม BUY`);
                         continue;
                     }
                     if (htfTrend === 'BULLISH' && zone.type === 'SELL_ZONE') {
-                        console.log(`   🚫 [HTF] ข้าม ${zone.name} เพราะ H4 Bullish → ห้าม SELL`);
+                        console.log(`   🚫 [H1] ข้าม ${zone.name} เพราะ H1 Bullish → ห้าม SELL`);
                         continue;
                     }
 
@@ -311,14 +354,12 @@ async function checkMarketLogic() {
                                 const recentCandles = closedM5Array.slice(pIndex, entryIndex + 1);
                                 if (paResult.direction === 'BUY') {
                                     const swingLow = Math.min(...recentCandles.map(c => c.low));
-                                    const zoneEdgeSL = paResult.cancelPrice - ENGINE_CONFIG.SL_BUFFER; // zone.bottom - buffer
-                                    // [Fix#1 Hybrid] ใช้ตัวที่ไกลกว่า (ปลอดภัยกว่า) ระหว่าง swing กับ zone edge
-                                    preCalcSL = Math.min(swingLow - ENGINE_CONFIG.SL_BUFFER, zoneEdgeSL);
+                                    // ใช้ swingLow เพียวๆ ตามหลัก SMC ป้องกัน SL กว้างเกินไปในโซนใหญ่
+                                    preCalcSL = swingLow - ENGINE_CONFIG.SL_BUFFER;
                                 } else {
                                     const swingHigh = Math.max(...recentCandles.map(c => c.high));
-                                    const zoneEdgeSL = paResult.cancelPrice + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER; // zone.top + buffer
-                                    // [Fix#1 Hybrid] ใช้ตัวที่ไกลกว่า (ปลอดภัยกว่า) ระหว่าง swing กับ zone edge
-                                    preCalcSL = Math.max(swingHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER, zoneEdgeSL);
+                                    // ใช้ swingHigh เพียวๆ ตามหลัก SMC
+                                    preCalcSL = swingHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
                                 }
                             } else {
                                 preCalcSL = paResult.direction === 'BUY'
@@ -390,14 +431,12 @@ async function checkMarketLogic() {
                                 const recentCandles = closedM5Array.slice(pIndex, entryIndex + 1);
                                 if (signalDirection === 'BUY') {
                                     const swingLow = Math.min(...recentCandles.map(c => c.low));
-                                    const zoneEdgeSL = paResult.cancelPrice - ENGINE_CONFIG.SL_BUFFER; // zone.bottom - buffer
-                                    // [Fix#1 Hybrid] ใช้ตัวที่ไกลกว่า (ปลอดภัยกว่า) ระหว่าง swing กับ zone edge
-                                    cancelPrice = Math.min(swingLow - ENGINE_CONFIG.SL_BUFFER, zoneEdgeSL);
+                                    // ใช้ swingLow เพียวๆ ตามหลัก SMC ป้องกัน SL กว้างเกินไปในโซนใหญ่
+                                    cancelPrice = swingLow - ENGINE_CONFIG.SL_BUFFER;
                                 } else {
                                     const swingHigh = Math.max(...recentCandles.map(c => c.high));
-                                    const zoneEdgeSL = paResult.cancelPrice + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER; // zone.top + buffer
-                                    // [Fix#1 Hybrid] ใช้ตัวที่ไกลกว่า (ปลอดภัยกว่า) ระหว่าง swing กับ zone edge
-                                    cancelPrice = Math.max(swingHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER, zoneEdgeSL);
+                                    // ใช้ swingHigh เพียวๆ ตามหลัก SMC
+                                    cancelPrice = swingHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
                                 }
                             } else {
                                 // [Bug#3 Fix] CANDLE_CLOSE mode ต้องใช้ PA_WICK เสมอ
@@ -450,14 +489,23 @@ async function checkMarketLogic() {
                                 currentPrice: referenceWickPrice
                             });
 
-                            const msg = `🔥 <b>WickHunter XAU | SIGNAL TRIGGERED (CANDLE CLOSE)</b> 🔥\n\n` +
+                            let msg = `🔥 <b>WickHunter XAU | SIGNAL TRIGGERED (CANDLE CLOSE)</b> 🔥\n\n` +
                                 `✅ <b>Direction:</b> ${signalDirection}\n` +
                                 `✅ <b>Action:</b> สัญญาณกลับตัวยืนยันที่ราคาปิดแท่ง!\n\n` +
                                 `📍 <b>Entry Price:</b> ${referenceWickPrice.toFixed(2)}\n` +
-                                `🛑 <b>Stop Loss:</b> ${cancelPrice.toFixed(2)}\n` +
-                                `🎯 <b>TP 1 (RR 1:2):</b> ${tp1Price.toFixed(2)}\n` +
-                                `🎯 <b>TP 2 (RR 1:3):</b> ${tp2Price.toFixed(2)}\n\n` +
-                                `🚀 <b>Current Price:</b> ${referenceWickPrice.toFixed(2)}`;
+                                `🛑 <b>Stop Loss:</b> ${cancelPrice.toFixed(2)}\n`;
+
+                            if (ENGINE_CONFIG.USE_TRAILING_STOP) {
+                                msg += `\n🎯 <b>Action Plan (Trailing Mode):</b>\n` +
+                                       `1️⃣ เปิด 2 ไม้พร้อมกัน (แบ่ง Lot ครึ่งนึง)\n` +
+                                       `2️⃣ ไม้แรก: ตั้ง TP = ${tp1Price.toFixed(2)} (ปิดล็อกกำไร 50%)\n` +
+                                       `3️⃣ ไม้สอง: ปล่อย TP ว่างไว้ + รอเลื่อน SL บังหน้าทุนเมื่อไม้แรกชน TP\n\n`;
+                            } else {
+                                msg += `🎯 <b>TP 1 (RR 1:2):</b> ${tp1Price.toFixed(2)}\n` +
+                                       `🎯 <b>TP 2 (RR 1:3):</b> ${tp2Price.toFixed(2)}\n\n`;
+                            }
+
+                            msg += `🚀 <b>Current Price:</b> ${referenceWickPrice.toFixed(2)}`;
 
                             await sendSignal(msg);
                             activeTrade = {
@@ -485,14 +533,12 @@ async function checkMarketLogic() {
                             const recentCandles = closedM5Array.slice(pIndex, entryIndex + 1);
                             if (signalDirection === 'BUY') {
                                 const swingLow = Math.min(...recentCandles.map(c => c.low));
-                                const zoneEdgeSL = paResult.cancelPrice - ENGINE_CONFIG.SL_BUFFER; // zone.bottom - buffer
-                                // [Fix#1 Hybrid] ใช้ตัวที่ไกลกว่า (ปลอดภัยกว่า) ระหว่าง swing กับ zone edge
-                                cancelPrice = Math.min(swingLow - ENGINE_CONFIG.SL_BUFFER, zoneEdgeSL);
+                                // ใช้ swingLow เพียวๆ ตามหลัก SMC ป้องกัน SL กว้างเกินไปในโซนใหญ่
+                                cancelPrice = swingLow - ENGINE_CONFIG.SL_BUFFER;
                             } else {
                                 const swingHigh = Math.max(...recentCandles.map(c => c.high));
-                                const zoneEdgeSL = paResult.cancelPrice + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER; // zone.top + buffer
-                                // [Fix#1 Hybrid] ใช้ตัวที่ไกลกว่า (ปลอดภัยกว่า) ระหว่าง swing กับ zone edge
-                                cancelPrice = Math.max(swingHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER, zoneEdgeSL);
+                                // ใช้ swingHigh เพียวๆ ตามหลัก SMC
+                                cancelPrice = swingHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
                             }
                         } else if (ENGINE_CONFIG.SL_MODE === 'PA_WICK') {
                             cancelPrice = signalDirection === 'BUY'
@@ -1387,4 +1433,17 @@ function startSmartSyncLoop() {
 startSmartSyncLoop();
 setInterval(checkWaitingGuard, WAITING_GUARD_INTERVAL_MS);
 
-module.exports = { processTickData, processM1Close, forceScanNow };
+function updateConfig(newConfig) {
+    if (newConfig.hasOwnProperty('USE_H4_FILTER')) {
+        ENGINE_CONFIG.USE_H4_FILTER = newConfig.USE_H4_FILTER;
+    }
+    if (newConfig.hasOwnProperty('USE_TRAILING_STOP')) {
+        ENGINE_CONFIG.USE_TRAILING_STOP = newConfig.USE_TRAILING_STOP;
+    }
+    if (newConfig.hasOwnProperty('USE_CE_ENTRY')) {
+        ENGINE_CONFIG.USE_CE_ENTRY = newConfig.USE_CE_ENTRY;
+    }
+    console.log(`\n⚙️ [Config Updated]: H4=${ENGINE_CONFIG.USE_H4_FILTER}, Trailing=${ENGINE_CONFIG.USE_TRAILING_STOP}, CE_Entry=${ENGINE_CONFIG.USE_CE_ENTRY}`);
+}
+
+module.exports = { processTickData, processM1Close, forceScanNow, ENGINE_CONFIG, updateConfig };

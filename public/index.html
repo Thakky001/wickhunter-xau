@@ -39,6 +39,45 @@
             ⚡ SSE Disconnected — attempting to reconnect…
         </div>
 
+        <!-- ── CONTROL PANEL ── -->
+        <section aria-label="Control Panel">
+            <div class="section-title">🎛️ Engine Configuration</div>
+            <div class="card control-panel-card">
+                <div class="control-grid">
+                    <div class="control-item">
+                        <div class="control-text">
+                            <h3>🛡️ Prop Firm Mode (H4 Filter)</h3>
+                            <p>กรองเข้าเทรดเฉพาะไม้ที่สอดคล้องกับเทรนด์ H4 (เน้น Win Rate สูง, ปลอดภัย)</p>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="toggle-h4-filter">
+                            <span class="slider round"></span>
+                        </label>
+                    </div>
+                    <div class="control-item">
+                        <div class="control-text">
+                            <h3>🚀 Trailing Mode (Partial TP 50%)</h3>
+                            <p>ปิดกำไร 50% ที่ 2R และเลื่อน SL บังหน้าทุนสำหรับไม้ที่เหลือ (Let profit run)</p>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="toggle-trailing-stop">
+                            <span class="slider round"></span>
+                        </label>
+                    </div>
+                    <div class="control-item">
+                        <div class="control-text">
+                            <h3>🎯 CE Mode (50% Deep Entry)</h3>
+                            <p>ดักรอให้ราคาย่อลึกถึงระดับ 50% ของโซนก่อนเท่านั้น กรองสัญญาณตื้นๆ และบีบ SL ให้แคบ</p>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="toggle-ce-entry">
+                            <span class="slider round"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </section>
+
         <!-- ── STATUS CARDS ── -->
         <section aria-label="Status Overview">
             <div class="section-title">📊 Status Overview</div>
