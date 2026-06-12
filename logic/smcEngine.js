@@ -3,7 +3,6 @@ const { findFVG, findOrderBlock, checkPriceActionInZone, checkRecentPA, checkCho
 const { getCandles } = require('../services/twelveData');
 const dashboardState = require('../services/dashboardState');
 const sheets = require('../services/sheets');
-const { isWsConnected } = require('./finnhubWs');
 
 const STATES = {
     SCANNING: 'SCANNING',
@@ -865,10 +864,9 @@ async function checkWaitingGuard() {
     }
 
     if (now - lastFallbackCheckAt < FALLBACK_CHECK_COOLDOWN_MS) return;
-    if (isWsConnected()) return; // ← return ตรงนี้
 
     isCheckingWaitingGuard = true;
-    lastFallbackCheckAt = now; // ← ไม่ถูก set เมื่อ WS active
+    lastFallbackCheckAt = now;
     try {
         console.log("🛰️ [SMC Engine]: Finnhub tick ขาดช่วง → เช็ก M5 จาก TwelveData fallback");
         const m5Candles = await getCandles('5', 2);
