@@ -18,11 +18,11 @@ function findFVG(candles, m5Candles = []) {
 
         // Bullish FVG (Gap ขาขึ้น / โซน Buy)
         if (c3.low > c1.high && (c3.low - c1.high) >= H1_MIN_ZONE_SIZE && hasDisplacement && c2.close > c2.open) {
-            // [CE Mitigation] โซนถูกใช้ไปแล้วถ้าราคา (Body) ปิดทะลุ 50% ของช่องว่าง
+            // [Full Fill Mitigation] โซนถูกใช้ไปแล้วถ้าราคา (Body) ปิดหลุดขอบล่างของ FVG (100%)
             let isMitigated = false;
-            const midpoint = (c1.high + c3.low) / 2;
+            const bottomEdge = c1.high;
             for (let j = i + 1; j < candles.length; j++) {
-                if (Math.min(candles[j].open, candles[j].close) <= midpoint) {
+                if (Math.min(candles[j].open, candles[j].close) <= bottomEdge) {
                     isMitigated = true;
                     break;
                 }
@@ -31,7 +31,7 @@ function findFVG(candles, m5Candles = []) {
             // เช็กการทำลายโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
             if (!isMitigated && m5Candles.length > 0) {
                 for (let k = 0; k < m5Candles.length; k++) {
-                    if (m5Candles[k].time >= c3.time && Math.min(m5Candles[k].open, m5Candles[k].close) <= midpoint) {
+                    if (m5Candles[k].time >= c3.time && Math.min(m5Candles[k].open, m5Candles[k].close) <= bottomEdge) {
                         isMitigated = true;
                         break;
                     }
@@ -50,11 +50,11 @@ function findFVG(candles, m5Candles = []) {
         }
         // Bearish FVG (Gap ขาลง / โซน Sell)
         else if (c3.high < c1.low && (c1.low - c3.high) >= H1_MIN_ZONE_SIZE && hasDisplacement && c2.close < c2.open) {
-            // [CE Mitigation] โซนถูกใช้ไปแล้วถ้าราคา (Body) ปิดทะลุ 50% ของช่องว่าง
+            // [Full Fill Mitigation] โซนถูกใช้ไปแล้วถ้าราคา (Body) ปิดทะลุขอบบนของ FVG (100%)
             let isMitigated = false;
-            const midpoint = (c1.low + c3.high) / 2;
+            const topEdge = c1.low;
             for (let j = i + 1; j < candles.length; j++) {
-                if (Math.max(candles[j].open, candles[j].close) >= midpoint) {
+                if (Math.max(candles[j].open, candles[j].close) >= topEdge) {
                     isMitigated = true;
                     break;
                 }
@@ -63,7 +63,7 @@ function findFVG(candles, m5Candles = []) {
             // เช็กการทำลายโซนด้วยแท่ง M5 ล่าสุดที่เพิ่งเกิดขึ้น
             if (!isMitigated && m5Candles.length > 0) {
                 for (let k = 0; k < m5Candles.length; k++) {
-                    if (m5Candles[k].time >= c3.time && Math.max(m5Candles[k].open, m5Candles[k].close) >= midpoint) {
+                    if (m5Candles[k].time >= c3.time && Math.max(m5Candles[k].open, m5Candles[k].close) >= topEdge) {
                         isMitigated = true;
                         break;
                     }
