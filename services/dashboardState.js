@@ -15,7 +15,8 @@ const state = {
         monthly: { win: 0, loss: 0, rate: 0 }
     },
     tradingRange: null,
-    activeTrade: null
+    activeTrade: null,
+    atrStats: null
 };
 
 let localTrades = []; // เก็บประวัติออเดอร์ในหน่วยความจำ

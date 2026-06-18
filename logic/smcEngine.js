@@ -1,5 +1,5 @@
 const { sendSignal } = require('../services/telegram');
-const { findFVG, findOrderBlock, checkPriceActionInZone, checkRecentPA, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep, checkM1ChochBreak, checkM5BOS, findM5FVG } = require('./smcMath');
+const { findFVG, findOrderBlock, checkPriceActionInZone, checkRecentPA, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep, checkM1ChochBreak, checkM5BOS, findM5FVG, calculateDynamicBuffers } = require('./smcMath');
 const { getCandles } = require('../services/twelveData');
 const dashboardState = require('../services/dashboardState');
 const sheets = require('../services/sheets');
@@ -14,11 +14,37 @@ const STATES = {
 };
 
 let activeTrade = null; // เก็บข้อมูลไม้ที่กำลังทำงานอยู่
+let currentBuffers = null; // [ATR] เก็บค่า dynamic buffers ล่าสุด
+
+function getActiveBuffers() {
+    return {
+        slBuf: currentBuffers ? currentBuffers.dynamicSLBuffer : ENGINE_CONFIG.SL_BUFFER,
+        spreadBuf: currentBuffers ? currentBuffers.dynamicSpreadBuffer : ENGINE_CONFIG.SPREAD_BUFFER
+    };
+}
+
+function getAtrStatsMsg() {
+    if (!ENGINE_CONFIG.USE_ATR_BUFFER || !currentBuffers || !currentBuffers.atr14) return '';
+    return `\n\n📊 <b>ATR(14):</b> ${currentBuffers.atr14} | <b>Vol Ratio:</b> ${currentBuffers.volatilityRatio}x\n` +
+           `🛡️ <b>Buffers:</b> Spread=${currentBuffers.dynamicSpreadBuffer} | SL=${currentBuffers.dynamicSLBuffer}`;
+}
+
+// [Fix] ปัดทศนิยม 2 ตำแหน่ง สำหรับค่าราคาที่เก็บเข้า State/ส่งโบรคเกอร์
+function roundPrice(v) { return Math.round(v * 100) / 100; }
 
 const ENGINE_CONFIG = {
     SL_MODE: 'SWING_HIGH_LOW',   // 'SWING_HIGH_LOW' (อิงจุดสูงสุด/ต่ำสุดย้อนหลัง), 'PA_WICK' (อิงระดับ M5) หรือ 'ZONE_EDGE'
     SL_BUFFER: 2.0,              // ระยะเผื่อสะบัดปลายไส้ (2.0 USD หรือ 200 จุด)
     SPREAD_BUFFER: 0.5,          // [NEW] ระยะเผื่อสเปรดสเปรดสำหรับไม้ SELL (0.5 USD หรือ 50 จุด)
+    USE_ATR_BUFFER: true,        // [ATR] Toggle เปิด/ปิด Dynamic Buffers
+    ATR_PERIOD: 14,              // [ATR] ATR period
+    ATR_BASELINE_PERIOD: 50,     // [ATR] Baseline period for volatility ratio
+    SPREAD_ATR_MULT: 0.25,       // [ATR] Multiplier for spread buffer
+    MIN_SPREAD_BUFFER: 0.3,      // [ATR] Minimum spread buffer
+    MAX_SPREAD_BUFFER: 3.0,      // [ATR] Maximum spread buffer
+    SL_BUFFER_BASE: 2.0,         // [ATR] Base SL buffer
+    MIN_SL_BUFFER: 1.5,          // [ATR] Minimum SL buffer
+    MAX_SL_BUFFER: 5.0,          // [ATR] Maximum SL buffer
     SWING_LOOKBACK_CANDLES: 10,  // จำนวนแท่ง M5 ย้อนหลังที่ใช้หา Swing High/Low
     MAX_SL_POINTS: 18.0,         // [Fix#1] ขยายจาก 15.0 → 18.0 เพราะ SL อิง zone edge มักกว้างกว่า swing SL
     MIN_TP_POINTS: 8.0,          // จำกัดระยะ TP ขั้นต่ำไม่น้อยกว่า 8.0 USD (800 จุด) เพื่อให้ SL กว้างพอที่จะรอดจากการสะบัด
@@ -32,7 +58,8 @@ const ENGINE_CONFIG = {
     CONT_TP2_RR: 4,                        // [Continuation] TP2 R:R ratio (สูงกว่า Reversal เพราะ trend มี momentum)
     USE_H4_FILTER: true,                   // [NEW] Toggle for H4 Trend Alignment (โหมดเทรดกองทุน)
     USE_TRAILING_STOP: true,               // [NEW] Toggle for Partial TP 50% & Trailing Stop
-    USE_CE_ENTRY: true                     // [NEW] Toggle for Consequent Encroachment (50% deep entry)
+    USE_CE_ENTRY: true,                    // [NEW] Toggle for Consequent Encroachment (50% deep entry)
+    BROKER_UTC_OFFSET: 2                   // [Fix] H4 Timezone: Offset ชั่วโมงจาก UTC ตาม Server โบรคเกอร์ (Exness/ICMarkets = 2, DST = 3)
 };
 
 const PRE_ALERT_TIMEOUT_MS = 15 * 60 * 1000;
@@ -106,14 +133,17 @@ async function checkMarketLogic() {
             const currentMinute = new Date().getUTCMinutes();
 
             // [API Fix] หน่วงเวลา 2 นาที เพื่อให้ Server อัปเดตแท่ง H1 ล่าสุดจนเสร็จสมบูรณ์ก่อนดึง
+            // [Fix] ใช้ตัวแปรชั่วคราว ป้องกัน cache หายถ้า API ล้มเหลว
             if (cachedH1Candles.length === 0) {
-                cachedH1Candles = await getCandles('60', 100); // ดึง 100 แท่ง H1 = ~4 วัน (รองรับ MAX_ZONE_AGE_HOURS: 72)
+                const newH1 = await getCandles('60', 100); // ดึง 100 แท่ง H1 = ~4 วัน (รองรับ MAX_ZONE_AGE_HOURS: 72)
+                if (newH1.length > 0) cachedH1Candles = newH1;
                 lastH1FetchHour = currentMinute < 2 ? -1 : currentHour; // ถ้าดึงตอนต้นชั่วโมง ให้บังคับดึงซ้ำอีกทีตอนนาทีที่ 2
                 if (cachedH1Candles.length > 0) {
                     console.log(`🔄 [SMC Engine]: โหลดข้อมูลแท่งเทียน H1 เริ่มต้นสำเร็จ`);
                 }
             } else if (currentHour !== lastH1FetchHour && currentMinute >= 2) {
-                cachedH1Candles = await getCandles('60', 100);
+                const newH1 = await getCandles('60', 100);
+                if (newH1.length > 0) cachedH1Candles = newH1;
                 lastH1FetchHour = currentHour;
                 if (cachedH1Candles.length > 0) {
                     console.log(`🔄 [SMC Engine]: อัปเดตข้อมูลแท่งเทียน H1 ใหม่ (ชั่วโมงที่ ${currentHour} นาทีที่ ${currentMinute})`);
@@ -125,6 +155,15 @@ async function checkMarketLogic() {
             if (cachedH1Candles.length === 0 || m5Candles.length < 2) {
                 console.log(`⚠️  [DEBUG]: ดึงข้อมูลแท่งเทียนไม่สำเร็จหรือได้มาไม่ครบ → ข้ามรอบนี้`);
                 return;
+            }
+
+            // [ATR] คำนวณ Dynamic Buffers จาก M5
+            currentBuffers = calculateDynamicBuffers(m5Candles, ENGINE_CONFIG);
+            
+            // Log ATR status
+            if (ENGINE_CONFIG.USE_ATR_BUFFER && currentBuffers.atr14) {
+                console.log(`📊 [ATR]: M5 ATR(14)=${currentBuffers.atr14} | Vol Ratio=${currentBuffers.volatilityRatio}x | SpreadBuf=${currentBuffers.dynamicSpreadBuffer} | SLBuf=${currentBuffers.dynamicSLBuffer}`);
+                dashboardState.update({ atrStats: currentBuffers });
             }
 
             const closedH1Candles = cachedH1Candles.slice(0, -1);
@@ -151,14 +190,17 @@ async function checkMarketLogic() {
             for (let h1 of closedH1Candles) {
                 if (!h1.time) continue;
                 const d = new Date(h1.time);
-                const h4Block = Math.floor(d.getUTCHours() / 4) * 4;
-                const key = `${d.getUTCDate()}-${h4Block}`;
+                // [Fix] ปรับเวลาให้ตรงกับ Broker Server (UTC+2 สำหรับ Exness/ICMarkets)
+                const brokerHour = (d.getUTCHours() + ENGINE_CONFIG.BROKER_UTC_OFFSET) % 24;
+                const brokerDate = new Date(d.getTime() + ENGINE_CONFIG.BROKER_UTC_OFFSET * 3600000);
+                const h4Block = Math.floor(brokerHour / 4) * 4;
+                const key = `${brokerDate.getUTCDate()}-${h4Block}`;
 
                 if (!currentH4 || currentH4.key !== key) {
                     if (currentH4) h4Candles.push(currentH4);
                     currentH4 = {
                         key: key,
-                        time: new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), h4Block, 0, 0)).toISOString(),
+                        time: new Date(Date.UTC(brokerDate.getUTCFullYear(), brokerDate.getUTCMonth(), brokerDate.getUTCDate(), h4Block, 0, 0)).toISOString(),
                         open: h1.open,
                         high: h1.high,
                         low: h1.low,
@@ -354,19 +396,19 @@ async function checkMarketLogic() {
                                 const recentCandles = closedM5Array.slice(pIndex, entryIndex + 1);
                                 if (paResult.direction === 'BUY') {
                                     const swingLow = Math.min(...recentCandles.map(c => c.low));
-                                    const zoneEdgeSL = paResult.cancelPrice - ENGINE_CONFIG.SL_BUFFER; // zone.bottom - buffer
+                                    const zoneEdgeSL = paResult.cancelPrice - getActiveBuffers().slBuf; // zone.bottom - buffer
                                     // [Fix#1 Hybrid] ใช้ตัวที่ไกลกว่า (ปลอดภัยกว่า) ระหว่าง swing กับ zone edge
-                                    preCalcSL = Math.min(swingLow - ENGINE_CONFIG.SL_BUFFER, zoneEdgeSL);
+                                    preCalcSL = Math.min(swingLow - getActiveBuffers().slBuf, zoneEdgeSL);
                                 } else {
                                     const swingHigh = Math.max(...recentCandles.map(c => c.high));
-                                    const zoneEdgeSL = paResult.cancelPrice + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER; // zone.top + buffer
+                                    const zoneEdgeSL = paResult.cancelPrice + getActiveBuffers().slBuf + getActiveBuffers().spreadBuf; // zone.top + buffer
                                     // [Fix#1 Hybrid] ใช้ตัวที่ไกลกว่า (ปลอดภัยกว่า) ระหว่าง swing กับ zone edge
-                                    preCalcSL = Math.max(swingHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER, zoneEdgeSL);
+                                    preCalcSL = Math.max(swingHigh + getActiveBuffers().slBuf + getActiveBuffers().spreadBuf, zoneEdgeSL);
                                 }
                             } else {
                                 preCalcSL = paResult.direction === 'BUY'
-                                    ? paResult.paCandleLow - ENGINE_CONFIG.SL_BUFFER
-                                    : paResult.paCandleHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
+                                    ? paResult.paCandleLow - getActiveBuffers().slBuf
+                                    : paResult.paCandleHigh + getActiveBuffers().slBuf + getActiveBuffers().spreadBuf;
                             }
 
                             pendingChoch = {
@@ -433,21 +475,21 @@ async function checkMarketLogic() {
                                 const recentCandles = closedM5Array.slice(pIndex, entryIndex + 1);
                                 if (signalDirection === 'BUY') {
                                     const swingLow = Math.min(...recentCandles.map(c => c.low));
-                                    const zoneEdgeSL = paResult.cancelPrice - ENGINE_CONFIG.SL_BUFFER; // zone.bottom - buffer
+                                    const zoneEdgeSL = paResult.cancelPrice - getActiveBuffers().slBuf; // zone.bottom - buffer
                                     // [Fix#1 Hybrid] ใช้ตัวที่ไกลกว่า (ปลอดภัยกว่า) ระหว่าง swing กับ zone edge
-                                    cancelPrice = Math.min(swingLow - ENGINE_CONFIG.SL_BUFFER, zoneEdgeSL);
+                                    cancelPrice = Math.min(swingLow - getActiveBuffers().slBuf, zoneEdgeSL);
                                 } else {
                                     const swingHigh = Math.max(...recentCandles.map(c => c.high));
-                                    const zoneEdgeSL = paResult.cancelPrice + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER; // zone.top + buffer
+                                    const zoneEdgeSL = paResult.cancelPrice + getActiveBuffers().slBuf + getActiveBuffers().spreadBuf; // zone.top + buffer
                                     // [Fix#1 Hybrid] ใช้ตัวที่ไกลกว่า (ปลอดภัยกว่า) ระหว่าง swing กับ zone edge
-                                    cancelPrice = Math.max(swingHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER, zoneEdgeSL);
+                                    cancelPrice = Math.max(swingHigh + getActiveBuffers().slBuf + getActiveBuffers().spreadBuf, zoneEdgeSL);
                                 }
                             } else {
                                 // [Bug#3 Fix] CANDLE_CLOSE mode ต้องใช้ PA_WICK เสมอ
                                 // เพราะ entry คือ candle.close (กลางแท่ง) ถ้าใช้ Zone Edge SL จะกว้างเกิน R:R บิดเบือน
                                 cancelPrice = signalDirection === 'BUY'
-                                    ? paResult.paCandleLow - ENGINE_CONFIG.SL_BUFFER
-                                    : paResult.paCandleHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
+                                    ? paResult.paCandleLow - getActiveBuffers().slBuf
+                                    : paResult.paCandleHigh + getActiveBuffers().slBuf + getActiveBuffers().spreadBuf;
                             }
 
                             let risk = Math.abs(referenceWickPrice - cancelPrice);
@@ -511,13 +553,13 @@ async function checkMarketLogic() {
 
                             msg += `🚀 <b>Current Price:</b> ${referenceWickPrice.toFixed(2)}`;
 
-                            await sendSignal(msg);
+                            await sendSignal(msg + getAtrStatsMsg());
                             activeTrade = {
                                 direction: signalDirection,
-                                entry: referenceWickPrice,
-                                sl: cancelPrice,
-                                tp1: tp1Price,
-                                tp2: tp2Price,
+                                entry: roundPrice(referenceWickPrice),
+                                sl: roundPrice(cancelPrice),
+                                tp1: roundPrice(tp1Price),
+                                tp2: roundPrice(tp2Price),
                                 isTp1Hit: false,
                                 time: new Date().toISOString()
                             };
@@ -537,23 +579,23 @@ async function checkMarketLogic() {
                             const recentCandles = closedM5Array.slice(pIndex, entryIndex + 1);
                             if (signalDirection === 'BUY') {
                                 const swingLow = Math.min(...recentCandles.map(c => c.low));
-                                const zoneEdgeSL = paResult.cancelPrice - ENGINE_CONFIG.SL_BUFFER; // zone.bottom - buffer
+                                const zoneEdgeSL = paResult.cancelPrice - getActiveBuffers().slBuf; // zone.bottom - buffer
                                 // [Fix#1 Hybrid] ใช้ตัวที่ไกลกว่า (ปลอดภัยกว่า) ระหว่าง swing กับ zone edge
-                                cancelPrice = Math.min(swingLow - ENGINE_CONFIG.SL_BUFFER, zoneEdgeSL);
+                                cancelPrice = Math.min(swingLow - getActiveBuffers().slBuf, zoneEdgeSL);
                             } else {
                                 const swingHigh = Math.max(...recentCandles.map(c => c.high));
-                                const zoneEdgeSL = paResult.cancelPrice + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER; // zone.top + buffer
+                                const zoneEdgeSL = paResult.cancelPrice + getActiveBuffers().slBuf + getActiveBuffers().spreadBuf; // zone.top + buffer
                                 // [Fix#1 Hybrid] ใช้ตัวที่ไกลกว่า (ปลอดภัยกว่า) ระหว่าง swing กับ zone edge
-                                cancelPrice = Math.max(swingHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER, zoneEdgeSL);
+                                cancelPrice = Math.max(swingHigh + getActiveBuffers().slBuf + getActiveBuffers().spreadBuf, zoneEdgeSL);
                             }
                         } else if (ENGINE_CONFIG.SL_MODE === 'PA_WICK') {
                             cancelPrice = signalDirection === 'BUY'
-                                ? paResult.paCandleLow - ENGINE_CONFIG.SL_BUFFER
-                                : paResult.paCandleHigh + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
+                                ? paResult.paCandleLow - getActiveBuffers().slBuf
+                                : paResult.paCandleHigh + getActiveBuffers().slBuf + getActiveBuffers().spreadBuf;
                         } else {
                             cancelPrice = signalDirection === 'BUY'
                                 ? paResult.cancelPrice
-                                : paResult.cancelPrice + ENGINE_CONFIG.SPREAD_BUFFER;
+                                : paResult.cancelPrice + getActiveBuffers().spreadBuf;
                         }
 
                         let risk = Math.abs(referenceWickPrice - cancelPrice);
@@ -649,8 +691,8 @@ async function checkMarketLogic() {
                             console.log(`   ✅ [Continuation] PA rejection ใน FVG ยืนยันทันที! คำนวณ Entry/SL/TP...`);
                             const entryPrice = closedM5Candle.close;
                             const sl = bosDirection === 'BUY'
-                                ? fvg.bottom - ENGINE_CONFIG.SL_BUFFER
-                                : fvg.top + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
+                                ? fvg.bottom - getActiveBuffers().slBuf
+                                : fvg.top + getActiveBuffers().slBuf + getActiveBuffers().spreadBuf;
                             let risk = Math.abs(entryPrice - sl);
 
                             if (risk > ENGINE_CONFIG.CONT_MAX_SL_POINTS) {
@@ -682,8 +724,8 @@ async function checkMarketLogic() {
                                     `🎯 <b>TP 2 (RR 1:${ENGINE_CONFIG.CONT_TP2_RR}):</b> ${tp2Price.toFixed(2)}\n\n` +
                                     `🚀 <b>Current Price:</b> ${entryPrice.toFixed(2)}`;
 
-                                await sendSignal(contMsg);
-                                activeTrade = { direction: bosDirection, entry: entryPrice, sl, tp1: tp1Price, tp2: tp2Price, isTp1Hit: false, time: new Date().toISOString() };
+                                await sendSignal(contMsg + getAtrStatsMsg());
+                                activeTrade = { direction: bosDirection, entry: roundPrice(entryPrice), sl: roundPrice(sl), tp1: roundPrice(tp1Price), tp2: roundPrice(tp2Price), isTp1Hit: false, time: new Date().toISOString() };
                                 currentState = STATES.MONITORING_TRADE;
                                 dashboardState.update({ botState: currentState, activeTrade });
                                 console.log(`🟢 [Continuation]: สัญญาณถูกส่งแล้ว! → MONITORING_TRADE`);
@@ -737,8 +779,8 @@ async function checkMarketLogic() {
                 console.log(`   ✅ [Continuation] PA Rejection ใน FVG ยืนยัน! → คำนวณ Entry...`);
                 const entryPrice = latestContCandle.close;
                 const sl = contDir === 'BUY'
-                    ? contFvg.bottom - ENGINE_CONFIG.SL_BUFFER
-                    : contFvg.top + ENGINE_CONFIG.SL_BUFFER + ENGINE_CONFIG.SPREAD_BUFFER;
+                    ? contFvg.bottom - getActiveBuffers().slBuf
+                    : contFvg.top + getActiveBuffers().slBuf + getActiveBuffers().spreadBuf;
                 let risk = Math.abs(entryPrice - sl);
 
                 if (risk > ENGINE_CONFIG.CONT_MAX_SL_POINTS) {
@@ -773,8 +815,8 @@ async function checkMarketLogic() {
                         `🎯 <b>TP 2 (RR 1:${ENGINE_CONFIG.CONT_TP2_RR}):</b> ${tp2Price.toFixed(2)}\n\n` +
                         `🚀 <b>Current Price:</b> ${entryPrice.toFixed(2)}`;
 
-                    await sendSignal(contMsg);
-                    activeTrade = { direction: contDir, entry: entryPrice, sl, tp1: tp1Price, tp2: tp2Price, isTp1Hit: false, time: new Date().toISOString() };
+                    await sendSignal(contMsg + getAtrStatsMsg());
+                    activeTrade = { direction: contDir, entry: roundPrice(entryPrice), sl: roundPrice(sl), tp1: roundPrice(tp1Price), tp2: roundPrice(tp2Price), isTp1Hit: false, time: new Date().toISOString() };
                     pendingContinuation = null;
                     currentState = STATES.MONITORING_TRADE;
                     dashboardState.update({ botState: currentState, activeTrade });
@@ -1299,13 +1341,13 @@ async function processTickData(currentPrice, source = 'tick') {
                     `🎯 <b>TP 2 (RR 1:3):</b> ${tp2Price.toFixed(2)}\n\n` +
                     `🚀 <b>Current Price:</b> ${price.toFixed(2)}${sourceNote}`;
 
-                await sendSignal(msg);
+                await sendSignal(msg + getAtrStatsMsg());
                 activeTrade = {
                     direction: signalDirection,
-                    entry: referenceWickPrice,
-                    sl: slPrice,
-                    tp1: tp1Price,
-                    tp2: tp2Price,
+                    entry: roundPrice(referenceWickPrice),
+                    sl: roundPrice(slPrice),
+                    tp1: roundPrice(tp1Price),
+                    tp2: roundPrice(tp2Price),
                     isTp1Hit: false,
                     time: new Date().toISOString()
                 };
@@ -1403,14 +1445,14 @@ async function processM1Close(m1Candle) {
         `🎯 <b>TP 2 (RR 1:3):</b> ${tp2Price.toFixed(2)}\n\n` +
         `🚀 <b>Current Price:</b> ${entryPrice.toFixed(2)}`;
 
-    await sendSignal(msg);
+    await sendSignal(msg + getAtrStatsMsg());
 
     activeTrade = {
         direction: direction,
-        entry: entryPrice,
-        sl: sl,
-        tp1: tp1Price,
-        tp2: tp2Price,
+        entry: roundPrice(entryPrice),
+        sl: roundPrice(sl),
+        tp1: roundPrice(tp1Price),
+        tp2: roundPrice(tp2Price),
         isTp1Hit: false,
         time: new Date().toISOString()
     };
@@ -1423,17 +1465,28 @@ async function processM1Close(m1Candle) {
 
 function startSmartSyncLoop() {
     checkMarketLogic(); // รันครั้งแรกทันที
+    scheduleNextScan();
+}
 
-    setInterval(() => {
-        const now = new Date();
-        const minutes = now.getMinutes();
-        const seconds = now.getSeconds();
+// [Fix] คำนวณเวลาที่เหลือถึงนาทีถัดไปที่หาร 5 ลงตัว (วินาทีที่ 2) แล้วตั้ง setTimeout ยิงทีเดียว
+function scheduleNextScan() {
+    const now = new Date();
+    const mins = now.getMinutes();
+    const secs = now.getSeconds();
+    const ms = now.getMilliseconds();
 
-        // รันเฉพาะเมื่อนาทีหาร 5 ลงตัว และอยู่ที่วินาทีที่ 2
-        if (minutes % 5 === 0 && seconds === 2) {
-            checkMarketLogic();
-        }
-    }, 1000);
+    // หานาทีถัดไปที่หาร 5 ลงตัว
+    const nextMin5 = Math.ceil((mins + 1) / 5) * 5;
+    const target = new Date(now);
+    target.setMinutes(nextMin5, 2, 0); // วินาทีที่ 2, มิลลิวินาทีที่ 0
+
+    let delay = target.getTime() - now.getTime();
+    if (delay <= 0) delay += 5 * 60 * 1000; // ถ้าเลยเวลาไปแล้ว ข้ามไป 5 นาทีถัดไป
+
+    setTimeout(() => {
+        checkMarketLogic();
+        scheduleNextScan(); // ตั้งรอบถัดไป
+    }, delay);
 }
 
 startSmartSyncLoop();

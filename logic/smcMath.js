@@ -611,4 +611,89 @@ function findM5FVG(m5Candles, scanStart, scanEnd, direction) {
     return { isValid: true, fvg: fvgs[0] };
 }
 
-module.exports = { findFVG, findOrderBlock, checkPriceActionInZone, checkRecentPA, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep, checkM1ChochBreak, checkM5BOS, findM5FVG };
+/**
+ * Calculates Average True Range (ATR)
+ * @param {Array} candles Array of candles {high, low, close}
+ * @param {number} period Lookback period
+ * @returns {Object} { atr, trValues }
+ */
+function calculateATR(candles, period = 14) {
+    if (!candles || candles.length < period + 1) return { atr: null, trValues: [] };
+
+    // [Fix] คำนวณเฉพาะ period+1 แท่งสุดท้าย เพื่อประหยัด RAM ไม่สะสม trValues ทั้งหมด
+    const startIdx = Math.max(1, candles.length - period);
+    const trValues = [];
+    for (let i = startIdx; i < candles.length; i++) {
+        const c = candles[i];
+        const pc = candles[i - 1];
+        
+        const hl = c.high - c.low;
+        const hpc = Math.abs(c.high - pc.close);
+        const lpc = Math.abs(c.low - pc.close);
+        
+        const tr = Math.max(hl, hpc, lpc);
+        trValues.push(tr);
+    }
+
+    if (trValues.length < period) return { atr: null, trValues };
+
+    const sumTr = trValues.reduce((sum, tr) => sum + tr, 0);
+    const atr = sumTr / period;
+
+    return { atr, trValues };
+}
+
+/**
+ * Calculates Dynamic Spread and SL Buffers based on ATR
+ * @param {Array} m5Candles M5 candles array
+ * @param {Object} config ENGINE_CONFIG subset
+ * @returns {Object} dynamic buffers and stats
+ */
+function calculateDynamicBuffers(m5Candles, config) {
+    if (!config.USE_ATR_BUFFER) {
+        return {
+            dynamicSpreadBuffer: config.SPREAD_BUFFER,
+            dynamicSLBuffer: config.SL_BUFFER,
+            atr14: null,
+            atrBaseline: null,
+            volatilityRatio: 1.0
+        };
+    }
+
+    const { atr: atr14 } = calculateATR(m5Candles, config.ATR_PERIOD || 14);
+    const { atr: atrBaseline } = calculateATR(m5Candles, config.ATR_BASELINE_PERIOD || 50);
+
+    if (atr14 === null || atrBaseline === null) {
+         return {
+            dynamicSpreadBuffer: config.SPREAD_BUFFER,
+            dynamicSLBuffer: config.SL_BUFFER,
+            atr14: null,
+            atrBaseline: null,
+            volatilityRatio: 1.0
+        };
+    }
+
+    // Volatility Ratio tells us if the market is currently more/less volatile than baseline
+    let volatilityRatio = atr14 / (atrBaseline || 1); 
+    // Clamp extreme ratios to avoid wild buffers
+    volatilityRatio = Math.max(0.5, Math.min(volatilityRatio, 3.0));
+
+    // Calculate Spread Buffer (approx 25% of ATR)
+    let dynamicSpreadBuffer = atr14 * (config.SPREAD_ATR_MULT || 0.25);
+    dynamicSpreadBuffer = Math.max(config.MIN_SPREAD_BUFFER || 0.3, Math.min(dynamicSpreadBuffer, config.MAX_SPREAD_BUFFER || 3.0));
+
+    // Calculate SL Buffer (scale base by volatility)
+    let dynamicSLBuffer = (config.SL_BUFFER_BASE || 2.0) * volatilityRatio;
+    dynamicSLBuffer = Math.max(config.MIN_SL_BUFFER || 1.5, Math.min(dynamicSLBuffer, config.MAX_SL_BUFFER || 5.0));
+
+    // Rounding to 2 decimal places for cleaner math later
+    return {
+        dynamicSpreadBuffer: Math.round(dynamicSpreadBuffer * 100) / 100,
+        dynamicSLBuffer: Math.round(dynamicSLBuffer * 100) / 100,
+        atr14: Math.round(atr14 * 100) / 100,
+        atrBaseline: Math.round(atrBaseline * 100) / 100,
+        volatilityRatio: Math.round(volatilityRatio * 100) / 100
+    };
+}
+
+module.exports = { findFVG, findOrderBlock, checkPriceActionInZone, checkRecentPA, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep, checkM1ChochBreak, checkM5BOS, findM5FVG, calculateATR, calculateDynamicBuffers };

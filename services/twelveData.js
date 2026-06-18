@@ -1,12 +1,29 @@
 const axios = require('axios');
 const keys = require('../config/keys');
 
+// [Fix] Cache Layer เพื่อป้องกัน Rate Limit (Twelve Data Free = 800 calls/day, 8 calls/min)
+const cache = new Map();
+const CACHE_TTL = {
+    '5': 4 * 60 * 1000,     // M5: cache 4 นาที (refresh ทุก 5 นาที ให้ margin 1 นาที)
+    '60': 55 * 60 * 1000    // H1: cache 55 นาที (refresh ทุกชั่วโมง)
+};
+
 /**
  * ดึงข้อมูลแท่งเทียนจริงจาก Twelve Data (ฟรี 800 ครั้ง/วัน)
+ * มี Cache Layer ป้องกัน Rate Limit
  * @param {string} resolution '60' สำหรับ H1, '5' สำหรับ M5
  * @param {number} limit จำนวนแท่งเทียนย้อนหลังที่ต้องการ
  */
 async function getCandles(resolution, limit) {
+    // [Fix] ตรวจสอบ Cache ก่อนยิง API
+    const cacheKey = `${resolution}_${limit}`;
+    const cached = cache.get(cacheKey);
+    const ttl = CACHE_TTL[resolution] || 60 * 1000;
+
+    if (cached && (Date.now() - cached.timestamp) < ttl) {
+        return cached.data;
+    }
+
     let interval = '1h'; // ค่าเริ่มต้นเป็น H1
 
     if (resolution === '5') {
@@ -58,14 +75,28 @@ async function getCandles(resolution, limit) {
                     time: timeMs / 1000
                 });
             }
+
+            // [Fix] เก็บผลลัพธ์ลง Cache
+            cache.set(cacheKey, { data: candles, timestamp: Date.now() });
+
             return candles;
             
         } else {
             console.log(`⚠️ Twelve Data Error: ${data.message || 'ไม่พบข้อมูล'}`);
+            // [Fix] หาก API Error แต่มี Cache เก่า ให้ใช้ Cache เก่าแทน (Stale-While-Error)
+            if (cached) {
+                console.log(`📦 [Cache] ใช้ข้อมูล Cache เก่าแทน (อายุ ${Math.round((Date.now() - cached.timestamp) / 1000)}s)`);
+                return cached.data;
+            }
             return [];
         }
     } catch (error) {
         console.error(`❌ ดึงข้อมูล Twelve Data ล้มเหลว:`, error.message);
+        // [Fix] Stale-While-Error: ถ้ามี Cache เก่า ให้ใช้แทน (ป้องกัน bot หยุดทำงาน)
+        if (cached) {
+            console.log(`📦 [Cache] ใช้ข้อมูล Cache เก่าแทน (อายุ ${Math.round((Date.now() - cached.timestamp) / 1000)}s)`);
+            return cached.data;
+        }
         return [];
     }
 }
