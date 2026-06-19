@@ -15,7 +15,7 @@ let reconnectTimer = null;
 // สร้างแท่งเทียน M1 จาก tick data ของ Finnhub แบบ real-time
 // ใช้สำหรับยืนยัน ChoCh break แทนการรอ M5 close (เร็วกว่า 5 เท่า)
 const M1_BUFFER_SIZE = 15;
-const M1_MIN_TICK_COUNT = 5;  // จำนวน tick ขั้นต่ำเพื่อให้แท่ง M1 น่าเชื่อถือ
+const M1_MIN_TICK_COUNT = 1;  // [Fix] ลดจาก 5 → 1 เพราะ Finnhub Free Tier ส่ง tick น้อย ถ้าตั้ง 5 แท่ง M1 จะไม่ถูกสร้างเลย
 
 let currentM1 = null;
 let m1Buffer = [];
