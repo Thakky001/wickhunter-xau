@@ -959,7 +959,9 @@ async function checkWaitingGuard() {
 
     if (now - lastFallbackCheckAt < FALLBACK_CHECK_COOLDOWN_MS) return;
 
-    if (dashboardState.state.wsStatus === 'CONNECTED') return; // WS active อยู่ → ไม่ต้องทำ fallback
+    // [Fix] เช็กว่ามี tick จริงไหม ไม่ใช่แค่ ws connected
+    // ถ้า tick ล่าสุดยังไม่เกิน TICK_STALE_MS (60s) ถือว่า data ไหลปกติ ไม่ต้อง fallback
+    if ((now - lastTickAt) < TICK_STALE_MS) return;
 
     isCheckingWaitingGuard = true;
     lastFallbackCheckAt = now;
