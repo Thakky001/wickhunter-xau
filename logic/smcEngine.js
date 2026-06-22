@@ -59,7 +59,8 @@ const ENGINE_CONFIG = {
     USE_H4_FILTER: true,                   // [NEW] Toggle for H4 Trend Alignment (โหมดเทรดกองทุน)
     USE_TRAILING_STOP: true,               // [NEW] Toggle for Partial TP 50% & Trailing Stop
     USE_CE_ENTRY: true,                    // [NEW] Toggle for Consequent Encroachment (50% deep entry)
-    BROKER_UTC_OFFSET: 2                   // [Fix] H4 Timezone: Offset ชั่วโมงจาก UTC ตาม Server โบรคเกอร์ (Exness/ICMarkets = 2, DST = 3)
+    BROKER_UTC_OFFSET: 2,                  // [Fix] H4 Timezone: Offset ชั่วโมงจาก UTC ตาม Server โบรคเกอร์ (Exness/ICMarkets = 2, DST = 3)
+    MAX_DAILY_LOSS_COUNT: 3                // [NEW] Circuit Breaker: Max Full SL per day
 };
 
 const PRE_ALERT_TIMEOUT_MS = 15 * 60 * 1000;
@@ -83,6 +84,9 @@ let lastTradedCandleTime = null; // เก็บบันทึกเวลา�
 let isProcessingTick = false; // ล็อกป้องกัน tick หลายตัวประมวลผลพร้อมกัน (ป้องกันแจ้งเตือนซ้ำ)
 let pendingChoch = null;      // [M1 ChoCh] เก็บข้อมูล setup ที่รอ ChoCh break จาก M1
 let pendingContinuation = null; // [Continuation] เก็บข้อมูล BOS+FVG ที่รอ pullback
+
+let currentDayStr = null;      // [Circuit Breaker] เก็บวันที่ปัจจุบัน
+let dailyFullSlCount = 0;      // [Circuit Breaker] นับจำนวน Full SL ในวันนี้
 
 function clearActiveSignal() {
     referenceWickPrice = 0;
@@ -125,6 +129,18 @@ async function checkMarketLogic() {
     try {
         if (!isMarketOpen()) {
             console.log("💤 ตลาดทองคำปิดทำการ บอทเข้าสู่โหมดพักผ่อน...");
+            return;
+        }
+
+        // [Circuit Breaker] เช็คจำกัดความเสียหายรายวัน
+        const nowStr = new Date().toISOString().split('T')[0];
+        if (nowStr !== currentDayStr) {
+            currentDayStr = nowStr;
+            dailyFullSlCount = 0; // Reset every day at UTC 00:00
+        }
+
+        if (dailyFullSlCount >= ENGINE_CONFIG.MAX_DAILY_LOSS_COUNT) {
+            console.log(`🛡️ [Circuit Breaker Active] วันนี้โดน Full SL ครบ ${dailyFullSlCount} ไม้แล้ว หยุดเทรดชั่วคราว`);
             return;
         }
 
@@ -1038,6 +1054,7 @@ async function checkWaitingGuard() {
 
 async function processTickData(currentPrice, source = 'tick') {
     const price = Number(currentPrice);
+    
     if (!Number.isFinite(price)) return;
 
     if (source === 'tick') {
@@ -1082,12 +1099,25 @@ async function processTickData(currentPrice, source = 'tick') {
                 clearActiveSignal();
                 dashboardState.update({ botState: currentState });
 
+                let circuitBreakerMsg = '';
+                const nowStr = new Date().toISOString().split('T')[0];
+                if (nowStr !== currentDayStr) {
+                    currentDayStr = nowStr;
+                    dailyFullSlCount = 1;
+                } else {
+                    dailyFullSlCount++;
+                }
+                
+                if (dailyFullSlCount >= ENGINE_CONFIG.MAX_DAILY_LOSS_COUNT) {
+                    circuitBreakerMsg = `\n\n🛡️ <b>[CIRCUIT BREAKER ACTIVE]</b>\nโดนกิน Full SL ครบ ${dailyFullSlCount} ไม้ในวันนี้ ระบบหยุดสแกนชั่วคราว เริ่มสแกนใหม่พรุ่งนี้เช้าเพื่อป้องกันพอร์ตครับ`;
+                }
+
                 const logMsg = `❌ <b>[SL HIT] ออเดอร์ ${invalidDir} ชน Stop Loss</b>\n\n` +
                     `📍 Entry: ${invalidEntry.toFixed(2)}\n` +
                     `🛑 SL: ${invalidSL.toFixed(2)}\n` +
                     `🎯 TP1: ${tp1Val.toFixed(2)}\n` +
                     `🎯 TP2: ${tp2Val.toFixed(2)}\n\n` +
-                    `📉 ชนที่ราคา: ${price.toFixed(2)} (ขาดทุน)${sourceNote}`;
+                    `📉 ชนที่ราคา: ${price.toFixed(2)} (ขาดทุน)${sourceNote}${circuitBreakerMsg}`;
 
                 await sendSignal(logMsg);
 

@@ -6,22 +6,20 @@ const { findFVG, findOrderBlock, checkRecentPA, getHTFTrend, calculateDynamicBuf
 const LOT_SIZE = 0.01;
 const DOLLARS_PER_POINT = 1; // 1 Lot = 100 oz. 0.01 Lot = 1 oz. So $1 move = $1.
 const RR_TARGET = 3.0;
+const MAX_DAILY_LOSS = 3;
 
 const testDataDir = path.join(__dirname, 'data');
 const h1File = path.join(testDataDir, 'xau_1y_h1.json');
 const m5File = path.join(testDataDir, 'xau_1y_m5.json');
 
 if (!fs.existsSync(h1File) || !fs.existsSync(m5File)) {
-    console.error('❌ Data files not found. Run scripts/downloadDerivData.js first.');
+    console.error('❌ Data files not found.');
     process.exit(1);
 }
 
-console.log('⏳ Loading historical data...');
 const h1Data = JSON.parse(fs.readFileSync(h1File, 'utf-8'));
 const m5Data = JSON.parse(fs.readFileSync(m5File, 'utf-8'));
-console.log(`✅ Loaded ${h1Data.length} H1 candles and ${m5Data.length} M5 candles.`);
 
-// Organize data by time
 const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000;
 const nowMs = m5Data[m5Data.length - 1].time * 1000;
 
@@ -33,10 +31,18 @@ function getPeriodName(timeMs) {
     return '1Y';
 }
 
-// === SIMULATOR STATE ===
-let currentState = 'SCANNING'; // SCANNING, WAITING_CHOCH, IN_TRADE
+let currentState = 'SCANNING'; 
 let activeTrade = null;
 let pendingSetup = null;
+let holdingTimeStats = [];
+let tradeStats = [];
+let dualTpStats = { fullSl: 0, tp1Only: 0, fullTp2: 0 };
+let currentBalance = 0;
+let peakBalance = 0;
+let maxDrawdown = 0;
+
+let currentDay = -1;
+let dailyLossCount = 0;
 
 let results = {
     '1M': { trades: 0, wins: 0, losses: 0, pnl: 0 },
@@ -47,52 +53,97 @@ let results = {
 
 let h1Index = 0;
 
-// === RUN SIMULATION ===
-console.log('🚀 Starting Backtest...');
-
 for (let i = 50; i < m5Data.length; i++) {
     const currentM5 = m5Data[i];
     const currentTimeMs = currentM5.time * 1000;
     const period = getPeriodName(currentTimeMs);
 
-    // Sync H1 index
+    const dateObj = new Date(currentTimeMs);
+    const dayOfMonth = dateObj.getUTCDate();
+    if (dayOfMonth !== currentDay) {
+        currentDay = dayOfMonth;
+        dailyLossCount = 0;
+    }
+
     while (h1Index < h1Data.length - 1 && h1Data[h1Index + 1].time <= currentM5.time) {
         h1Index++;
     }
 
-    if (h1Index < 50) continue; // Need enough history
+    if (h1Index < 50) continue;
 
     const h1Slice = h1Data.slice(Math.max(0, h1Index - 100), h1Index + 1);
     const m5Slice = m5Data.slice(i - 20, i + 1);
 
     if (currentState === 'IN_TRADE') {
-        // Check SL / TP
         let closed = false;
         let pnl = 0;
         let isWin = false;
 
         if (activeTrade.direction === 'BUY') {
-            if (currentM5.low <= activeTrade.sl) {
-                pnl = (activeTrade.sl - activeTrade.entry) * DOLLARS_PER_POINT;
-                closed = true;
-            } else if (currentM5.high >= activeTrade.tp) {
-                pnl = (activeTrade.tp - activeTrade.entry) * DOLLARS_PER_POINT;
-                closed = true;
-                isWin = true;
+            if (!activeTrade.isTp1Hit) {
+                if (currentM5.low <= activeTrade.sl) {
+                    pnl = (activeTrade.sl - activeTrade.entry) * DOLLARS_PER_POINT * 2;
+                    closed = true;
+                    dualTpStats.fullSl++;
+                    dailyLossCount++;
+                } else if (currentM5.high >= activeTrade.tp1) {
+                    activeTrade.accumulatedPnl = (activeTrade.tp1 - activeTrade.entry) * DOLLARS_PER_POINT;
+                    activeTrade.isTp1Hit = true;
+                    activeTrade.sl = activeTrade.entry;
+                    if (currentM5.high >= activeTrade.tp2) {
+                        pnl = activeTrade.accumulatedPnl + ((activeTrade.tp2 - activeTrade.entry) * DOLLARS_PER_POINT);
+                        closed = true;
+                        isWin = true;
+                        dualTpStats.fullTp2++;
+                    }
+                }
+            } else {
+                if (currentM5.low <= activeTrade.sl) {
+                    pnl = activeTrade.accumulatedPnl;
+                    closed = true;
+                    isWin = true;
+                    dualTpStats.tp1Only++;
+                } else if (currentM5.high >= activeTrade.tp2) {
+                    pnl = activeTrade.accumulatedPnl + ((activeTrade.tp2 - activeTrade.entry) * DOLLARS_PER_POINT);
+                    closed = true;
+                    isWin = true;
+                    dualTpStats.fullTp2++;
+                }
             }
         } else {
-            if (currentM5.high >= activeTrade.sl) {
-                pnl = (activeTrade.entry - activeTrade.sl) * DOLLARS_PER_POINT;
-                closed = true;
-            } else if (currentM5.low <= activeTrade.tp) {
-                pnl = (activeTrade.entry - activeTrade.tp) * DOLLARS_PER_POINT;
-                closed = true;
-                isWin = true;
+            if (!activeTrade.isTp1Hit) {
+                if (currentM5.high >= activeTrade.sl) {
+                    pnl = (activeTrade.entry - activeTrade.sl) * DOLLARS_PER_POINT * 2;
+                    closed = true;
+                    dualTpStats.fullSl++;
+                    dailyLossCount++;
+                } else if (currentM5.low <= activeTrade.tp1) {
+                    activeTrade.accumulatedPnl = (activeTrade.entry - activeTrade.tp1) * DOLLARS_PER_POINT;
+                    activeTrade.isTp1Hit = true;
+                    activeTrade.sl = activeTrade.entry;
+                    if (currentM5.low <= activeTrade.tp2) {
+                        pnl = activeTrade.accumulatedPnl + ((activeTrade.entry - activeTrade.tp2) * DOLLARS_PER_POINT);
+                        closed = true;
+                        isWin = true;
+                        dualTpStats.fullTp2++;
+                    }
+                }
+            } else {
+                if (currentM5.high >= activeTrade.sl) {
+                    pnl = activeTrade.accumulatedPnl;
+                    closed = true;
+                    isWin = true;
+                    dualTpStats.tp1Only++;
+                } else if (currentM5.low <= activeTrade.tp2) {
+                    pnl = activeTrade.accumulatedPnl + ((activeTrade.entry - activeTrade.tp2) * DOLLARS_PER_POINT);
+                    closed = true;
+                    isWin = true;
+                    dualTpStats.fullTp2++;
+                }
             }
         }
 
         if (closed) {
-            // Update stats for all periods that include this time
             if (period === '1M') {
                 updateStats('1M', isWin, pnl);
                 updateStats('3M', isWin, pnl);
@@ -109,12 +160,17 @@ for (let i = 50; i < m5Data.length; i++) {
                 updateStats('1Y', isWin, pnl);
             }
             
+            currentBalance += pnl;
+            if (currentBalance > peakBalance) peakBalance = currentBalance;
+            const drawdown = peakBalance - currentBalance;
+            if (drawdown > maxDrawdown) maxDrawdown = drawdown;
+            
+            holdingTimeStats.push(i - activeTrade.entryIndex);
             currentState = 'SCANNING';
             activeTrade = null;
         }
     } 
     else if (currentState === 'WAITING_CHOCH') {
-        // Check if current M5 breaks the ChoCh target
         let broken = false;
         if (pendingSetup.direction === 'BUY' && currentM5.close > pendingSetup.chochTarget) {
             broken = true;
@@ -122,7 +178,6 @@ for (let i = 50; i < m5Data.length; i++) {
             broken = true;
         }
 
-        // Check if invalid (hit SL before ChoCh)
         let invalid = false;
         if (pendingSetup.direction === 'BUY' && currentM5.low <= pendingSetup.sl) invalid = true;
         if (pendingSetup.direction === 'SELL' && currentM5.high >= pendingSetup.sl) invalid = true;
@@ -131,34 +186,39 @@ for (let i = 50; i < m5Data.length; i++) {
             currentState = 'SCANNING';
             pendingSetup = null;
         } else if (broken) {
-            // ENTER TRADE
-            const entry = currentM5.close; // enter at close
+            const entry = currentM5.close; 
             const sl = pendingSetup.sl;
             const risk = Math.abs(entry - sl);
-            const tp = pendingSetup.direction === 'BUY' ? entry + (risk * RR_TARGET) : entry - (risk * RR_TARGET);
+            const tp1 = pendingSetup.direction === 'BUY' ? entry + (risk * 3) : entry - (risk * 3);
+            const tp2 = pendingSetup.direction === 'BUY' ? entry + (risk * 4) : entry - (risk * 4);
+            tradeStats.push({ risk, tpDistance: Math.abs(entry - tp2) });
 
-            console.log(`[TRADE ENTERED] ${pendingSetup.direction} at ${entry} SL=${sl} TP=${tp}`);
             activeTrade = {
                 direction: pendingSetup.direction,
                 entry,
                 sl,
-                tp
+                tp1,
+                tp2,
+                originalSl: sl,
+                isTp1Hit: false,
+                accumulatedPnl: 0,
+                entryIndex: i
             };
             currentState = 'IN_TRADE';
             pendingSetup = null;
         } else if (i - pendingSetup.startIndex > 12) {
-            // Timeout after 1 hour (12 M5 candles)
             currentState = 'SCANNING';
             pendingSetup = null;
         }
     }
     else if (currentState === 'SCANNING') {
+        if (dailyLossCount >= MAX_DAILY_LOSS) continue;
+
         const htfTrend = getHTFTrend(h1Slice);
         const fvgs = findFVG(h1Slice, m5Slice);
         const obs = findOrderBlock(h1Slice);
         const allZones = fvgs.concat(obs);
 
-        // Filter zones by trend
         const isTrending = (htfTrend === 'BULLISH' || htfTrend === 'BEARISH');
         
         for (const zone of allZones) {
@@ -169,17 +229,13 @@ for (let i = 50; i < m5Data.length; i++) {
 
             const paResult = checkRecentPA(m5Slice, zone, 10);
             if (paResult.isValid) {
-                // Determine ChoCh target
                 const direction = zone.type === 'BUY_ZONE' ? 'BUY' : 'SELL';
-                
-                // Simplified ChoCh target (highest/lowest of last 5 candles)
                 const recentSlice = m5Slice.slice(-5);
                 let chochTarget = 0;
                 let sl = 0;
 
-                // Reverted 5. SL Buffer back to tight settings
                 const config = { USE_ATR_BUFFER: true, ATR_SL_MULTIPLIER: 0.5, SL_BUFFER: 0.5, SPREAD_BUFFER: 0.2 };
-                const atr = calculateDynamicBuffers(m5Slice, config).dynamicSLBuffer || 0.5; // dynamic buffer
+                const atr = calculateDynamicBuffers(m5Slice, config).dynamicSLBuffer || 0.5;
 
                 if (direction === 'BUY') {
                     chochTarget = Math.max(...recentSlice.map(c => c.high));
@@ -196,8 +252,7 @@ for (let i = 50; i < m5Data.length; i++) {
                     startIndex: i
                 };
                 currentState = 'WAITING_CHOCH';
-                console.log(`[DEBUG] Found PA in ${direction} zone. Waiting for ChoCh. Target: ${chochTarget}`);
-                break; // Stop checking other zones
+                break;
             }
         }
     }
@@ -210,8 +265,7 @@ function updateStats(period, isWin, pnl) {
     results[period].pnl += pnl;
 }
 
-// === PRINT RESULTS ===
-console.log('\n📊 === BACKTEST RESULTS (Lot 0.01 / $1 per point) ===');
+console.log('\n📊 === BACKTEST RESULTS WITH CIRCUIT BREAKER (Max Loss: 3/day) ===');
 
 for (const period of ['1M', '3M', '6M', '1Y']) {
     const stat = results[period];
@@ -225,3 +279,14 @@ for (const period of ['1M', '3M', '6M', '1Y']) {
 }
 
 console.log('\n✅ Backtest สำเร็จ!');
+console.log('\n📊 === สถิติแยกตามการปิดกำไร (Dual TP) ===');
+console.log(`🔸 โดนกิน SL เต็ม (เสีย 2 เท่า): ${dualTpStats.fullSl} ไม้`);
+console.log(`🔸 ชน TP1 แล้วโดนหน้าทุน (ได้แค่ 3 เท่า): ${dualTpStats.tp1Only} ไม้`);
+console.log(`🔸 ชน TP2 ทะลุเป้า (ได้เต็ม 7 เท่า): ${dualTpStats.fullTp2} ไม้`);
+console.log(`\n📉 === ความเสี่ยง (Risk & Drawdown) ===`);
+console.log(`🔸 Max Drawdown (ยอดเงินที่ลบลงไปลึกสุด): -$${maxDrawdown.toFixed(2)}`);
+
+if (holdingTimeStats.length > 0) {
+    const avgCandles = holdingTimeStats.reduce((a, b) => a + b, 0) / holdingTimeStats.length;
+    console.log(`\n⏳ ถือออเดอร์เฉลี่ย: ${(avgCandles * 5).toFixed(0)} นาที (${(avgCandles * 5 / 60).toFixed(1)} ชั่วโมง) ต่อ 1 ออเดอร์`);
+}
