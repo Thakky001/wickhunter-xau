@@ -1,6 +1,5 @@
-
+.env
 logs/
 *.log
-test/
-*.json
-*.js
+test/data/
+node_modules/

@@ -1,6 +1,6 @@
 const { sendSignal } = require('../services/telegram');
 const { findFVG, findOrderBlock, checkPriceActionInZone, checkRecentPA, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep, checkM1ChochBreak, checkM5BOS, findM5FVG, calculateDynamicBuffers } = require('./smcMath');
-const { getCandles } = require('../services/twelveData');
+const { getCandles } = require('../services/derivWs');
 const dashboardState = require('../services/dashboardState');
 const sheets = require('../services/sheets');
 
@@ -1465,7 +1465,10 @@ async function processM1Close(m1Candle) {
     pendingChoch = null;
 }
 
+let isLoopStarted = false;
 function startSmartSyncLoop() {
+    if (isLoopStarted) return;
+    isLoopStarted = true;
     checkMarketLogic(); // รันครั้งแรกทันที
     scheduleNextScan();
 }
@@ -1491,7 +1494,7 @@ function scheduleNextScan() {
     }, delay);
 }
 
-startSmartSyncLoop();
+// startSmartSyncLoop(); // [Fix] ถูกย้ายไปเรียกจาก derivWs.js ตอนที่ WebSocket Connect สำเร็จแล้ว
 setInterval(checkWaitingGuard, WAITING_GUARD_INTERVAL_MS);
 
 function updateConfig(newConfig) {
@@ -1507,4 +1510,4 @@ function updateConfig(newConfig) {
     console.log(`\n⚙️ [Config Updated]: H4=${ENGINE_CONFIG.USE_H4_FILTER}, Trailing=${ENGINE_CONFIG.USE_TRAILING_STOP}, CE_Entry=${ENGINE_CONFIG.USE_CE_ENTRY}`);
 }
 
-module.exports = { processTickData, processM1Close, forceScanNow, ENGINE_CONFIG, updateConfig };
+module.exports = { processTickData, processM1Close, forceScanNow, ENGINE_CONFIG, updateConfig, startSmartSyncLoop };
