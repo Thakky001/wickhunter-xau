@@ -54,8 +54,8 @@ const ENGINE_CONFIG = {
     CHOCH_WAIT_TIMEOUT_MS: 45 * 60 * 1000,  // [M1 ChoCh] หมดเวลารอ ChoCh break จาก M1 (45 นาที)
     CONT_MAX_SL_POINTS: 10.0,             // [Continuation] SL cap สำหรับ Continuation (แคบกว่า Reversal เพราะ M5 FVG เล็กกว่า H1 Zone)
     CONT_FVG_TIMEOUT_MS: 30 * 60 * 1000,  // [Continuation] 30 นาที timeout รอ pullback มาที่ FVG
-    CONT_TP1_RR: 2,                        // [Continuation] TP1 R:R ratio
-    CONT_TP2_RR: 4,                        // [Continuation] TP2 R:R ratio (สูงกว่า Reversal เพราะ trend มี momentum)
+    CONT_TP1_RR: 3,                        // [Continuation] TP1 R:R ratio
+    CONT_TP2_RR: 5,                        // [Continuation] TP2 R:R ratio (สูงกว่า Reversal เพราะ trend มี momentum)
     USE_H4_FILTER: true,                   // [NEW] Toggle for H4 Trend Alignment (โหมดเทรดกองทุน)
     USE_TRAILING_STOP: true,               // [NEW] Toggle for Partial TP 50% & Trailing Stop
     USE_CE_ENTRY: true,                    // [NEW] Toggle for Consequent Encroachment (50% deep entry)
@@ -507,8 +507,8 @@ async function checkMarketLogic() {
                                 cancelPrice = signalDirection === 'BUY' ? referenceWickPrice - risk : referenceWickPrice + risk;
                             }
 
-                            const tp1Price = signalDirection === 'BUY' ? referenceWickPrice + (risk * 2) : referenceWickPrice - (risk * 2);
-                            const tp2Price = signalDirection === 'BUY' ? referenceWickPrice + (risk * 3) : referenceWickPrice - (risk * 3);
+                            const tp1Price = signalDirection === 'BUY' ? referenceWickPrice + (risk * 3) : referenceWickPrice - (risk * 3);
+                            const tp2Price = signalDirection === 'BUY' ? referenceWickPrice + (risk * 4) : referenceWickPrice - (risk * 4);
 
                             currentState = STATES.TRIGGERED;
                             waitingStartedAt = null; // [Bug#3 Fix] ล้างค่าให้สะอาดเสมอหลัง TRIGGERED
@@ -547,8 +547,8 @@ async function checkMarketLogic() {
                                        `2️⃣ ไม้แรก: ตั้ง TP = ${tp1Price.toFixed(2)} (ปิดล็อกกำไร 50%)\n` +
                                        `3️⃣ ไม้สอง: ปล่อย TP ว่างไว้ + รอเลื่อน SL บังหน้าทุนเมื่อไม้แรกชน TP\n\n`;
                             } else {
-                                msg += `🎯 <b>TP 1 (RR 1:2):</b> ${tp1Price.toFixed(2)}\n` +
-                                       `🎯 <b>TP 2 (RR 1:3):</b> ${tp2Price.toFixed(2)}\n\n`;
+                                msg += `🎯 <b>TP 1 (RR 1:3):</b> ${tp1Price.toFixed(2)}\n` +
+                                       `🎯 <b>TP 2 (RR 1:4):</b> ${tp2Price.toFixed(2)}\n\n`;
                             }
 
                             msg += `🚀 <b>Current Price:</b> ${referenceWickPrice.toFixed(2)}`;
@@ -1119,10 +1119,10 @@ async function processTickData(currentPrice, source = 'tick') {
                 clearActiveSignal();
                 dashboardState.update({ botState: currentState });
 
-                const logMsg = `🎯 <b>[TP1 HIT] ออเดอร์ ${direction} ชน Take Profit 1 (RR 1:2)</b>\n\n` +
+                const logMsg = `🎯 <b>[TP1 HIT] ออเดอร์ ${direction} ชน Take Profit 1 (RR 1:3)</b>\n\n` +
                     `📍 Entry: ${tp1Entry.toFixed(2)}\n` +
                     `🎯 TP1: ${tp1Val.toFixed(2)}\n\n` +
-                    `📈 ชนที่ราคา: ${price.toFixed(2)} (เก็บกำไร RR 1:2 ✅)\n` +
+                    `📈 ชนที่ราคา: ${price.toFixed(2)} (เก็บกำไร RR 1:3 ✅)\n` +
                     `🔄 ระบบกลับไปสแกนหาโอกาสใหม่แล้ว...${sourceNote}`;
 
                 await sendSignal(logMsg);
@@ -1155,7 +1155,7 @@ async function processTickData(currentPrice, source = 'tick') {
                 clearActiveSignal();
                 dashboardState.update({ botState: currentState });
 
-                const logMsg = `🔥 <b>[TP2 HIT] ออเดอร์ ${direction} ชน Take Profit 2 (RR 1:3)</b>\n\n` +
+                const logMsg = `🔥 <b>[TP2 HIT] ออเดอร์ ${direction} ชน Take Profit 2 (RR 1:4)</b>\n\n` +
                     `📍 Entry: ${tp2Entry.toFixed(2)}\n` +
                     `🎯 TP2: ${tp2Val.toFixed(2)}\n\n` +
                     `📈 ชนที่ราคา: ${price.toFixed(2)} (ปิดออเดอร์ทำกำไรสูงสุด)${sourceNote}`;
@@ -1306,11 +1306,11 @@ async function processTickData(currentPrice, source = 'tick') {
                 let tp2Price = 0;
 
                 if (signalDirection === 'BUY') {
-                    tp1Price = referenceWickPrice + (risk * 2);
-                    tp2Price = referenceWickPrice + (risk * 3);
+                    tp1Price = referenceWickPrice + (risk * 3);
+                    tp2Price = referenceWickPrice + (risk * 4);
                 } else if (signalDirection === 'SELL') {
-                    tp1Price = referenceWickPrice - (risk * 2);
-                    tp2Price = referenceWickPrice - (risk * 3);
+                    tp1Price = referenceWickPrice - (risk * 3);
+                    tp2Price = referenceWickPrice - (risk * 4);
                 }
 
                 // TRIGGERED: อัปเดต Dashboard State
@@ -1339,8 +1339,8 @@ async function processTickData(currentPrice, source = 'tick') {
                     `✅ <b>Action:</b> เคลียร์ไส้เทียนสำเร็จ!\n\n` +
                     `📍 <b>Entry Price:</b> ${referenceWickPrice.toFixed(2)}\n` +
                     `🛑 <b>Stop Loss:</b> ${slPrice.toFixed(2)}\n` +
-                    `🎯 <b>TP 1 (RR 1:2):</b> ${tp1Price.toFixed(2)}\n` +
-                    `🎯 <b>TP 2 (RR 1:3):</b> ${tp2Price.toFixed(2)}\n\n` +
+                    `🎯 <b>TP 1 (RR 1:3):</b> ${tp1Price.toFixed(2)}\n` +
+                    `🎯 <b>TP 2 (RR 1:4):</b> ${tp2Price.toFixed(2)}\n\n` +
                     `🚀 <b>Current Price:</b> ${price.toFixed(2)}${sourceNote}`;
 
                 await sendSignal(msg + getAtrStatsMsg());
@@ -1406,8 +1406,8 @@ async function processM1Close(m1Candle) {
         sl = direction === 'BUY' ? entryPrice - risk : entryPrice + risk;
     }
 
-    const tp1Price = direction === 'BUY' ? entryPrice + (risk * 2) : entryPrice - (risk * 2);
-    const tp2Price = direction === 'BUY' ? entryPrice + (risk * 3) : entryPrice - (risk * 3);
+    const tp1Price = direction === 'BUY' ? entryPrice + (risk * 3) : entryPrice - (risk * 3);
+    const tp2Price = direction === 'BUY' ? entryPrice + (risk * 4) : entryPrice - (risk * 4);
 
     // Transition: WAITING_CHOCH → TRIGGERED → MONITORING_TRADE
     referenceWickPrice = entryPrice;
@@ -1443,8 +1443,8 @@ async function processM1Close(m1Candle) {
         `📊 <b>Mode:</b> ${filterMode}\n\n` +
         `📍 <b>Entry Price:</b> ${entryPrice.toFixed(2)}\n` +
         `🛑 <b>Stop Loss:</b> ${sl.toFixed(2)}\n` +
-        `🎯 <b>TP 1 (RR 1:2):</b> ${tp1Price.toFixed(2)}\n` +
-        `🎯 <b>TP 2 (RR 1:3):</b> ${tp2Price.toFixed(2)}\n\n` +
+        `🎯 <b>TP 1 (RR 1:3):</b> ${tp1Price.toFixed(2)}\n` +
+        `🎯 <b>TP 2 (RR 1:4):</b> ${tp2Price.toFixed(2)}\n\n` +
         `🚀 <b>Current Price:</b> ${entryPrice.toFixed(2)}`;
 
     await sendSignal(msg + getAtrStatsMsg());

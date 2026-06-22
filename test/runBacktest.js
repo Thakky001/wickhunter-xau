@@ -5,7 +5,7 @@ const { findFVG, findOrderBlock, checkRecentPA, getHTFTrend, calculateDynamicBuf
 // === CONFIGURATION ===
 const LOT_SIZE = 0.01;
 const DOLLARS_PER_POINT = 1; // 1 Lot = 100 oz. 0.01 Lot = 1 oz. So $1 move = $1.
-const RR_TARGET = 2.0;
+const RR_TARGET = 3.0;
 
 const testDataDir = path.join(__dirname, 'data');
 const h1File = path.join(testDataDir, 'xau_1y_h1.json');
@@ -177,6 +177,7 @@ for (let i = 50; i < m5Data.length; i++) {
                 let chochTarget = 0;
                 let sl = 0;
 
+                // Reverted 5. SL Buffer back to tight settings
                 const config = { USE_ATR_BUFFER: true, ATR_SL_MULTIPLIER: 0.5, SL_BUFFER: 0.5, SPREAD_BUFFER: 0.2 };
                 const atr = calculateDynamicBuffers(m5Slice, config).dynamicSLBuffer || 0.5; // dynamic buffer
 
