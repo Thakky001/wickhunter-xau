@@ -9,6 +9,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
     <link rel='stylesheet' href='style.css' />
+    <!-- TradingView Lightweight Charts -->
+    <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
 
@@ -21,6 +23,9 @@
             </div>
         </div>
         <div class="header-actions">
+            <a href="settings.html" class="control-button" style="text-decoration: none;" title="ตั้งค่าระบบการเทรด">
+                ⚙️ Settings
+            </a>
             <button id="force-scan-btn" class="control-button" type="button" title="ล้างสถานะออเดอร์ปัจจุบันและสแกนหาโซนใหม่ทันที">
                 🔄 รีเซ็ตออเดอร์
             </button>
@@ -39,44 +44,7 @@
             ⚡ SSE Disconnected — attempting to reconnect…
         </div>
 
-        <!-- ── CONTROL PANEL ── -->
-        <section aria-label="Control Panel">
-            <div class="section-title">🎛️ Engine Configuration</div>
-            <div class="card control-panel-card">
-                <div class="control-grid">
-                    <div class="control-item">
-                        <div class="control-text">
-                            <h3>🛡️ Prop Firm Mode (H4 Filter)</h3>
-                            <p>กรองเข้าเทรดเฉพาะไม้ที่สอดคล้องกับเทรนด์ H4 (เน้น Win Rate สูง, ปลอดภัย)</p>
-                        </div>
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="toggle-h4-filter">
-                            <span class="slider round"></span>
-                        </label>
-                    </div>
-                    <div class="control-item">
-                        <div class="control-text">
-                            <h3>🚀 Trailing Mode (Partial TP 50%)</h3>
-                            <p>ปิดกำไร 50% ที่ 2R และเลื่อน SL บังหน้าทุนสำหรับไม้ที่เหลือ (Let profit run)</p>
-                        </div>
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="toggle-trailing-stop">
-                            <span class="slider round"></span>
-                        </label>
-                    </div>
-                    <div class="control-item">
-                        <div class="control-text">
-                            <h3>🎯 CE Mode (50% Deep Entry)</h3>
-                            <p>ดักรอให้ราคาย่อลึกถึงระดับ 50% ของโซนก่อนเท่านั้น กรองสัญญาณตื้นๆ และบีบ SL ให้แคบ</p>
-                        </div>
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="toggle-ce-entry">
-                            <span class="slider round"></span>
-                        </label>
-                    </div>
-                </div>
-            </div>
-        </section>
+
 
         <!-- ── STATUS CARDS ── -->
         <section aria-label="Status Overview">
@@ -126,6 +94,15 @@
                     <div class="card-value" style="font-size:18px;" id="val-midpoint">—</div>
                     <div class="card-sub" id="sub-midpoint">Range: —</div>
                 </div>
+            </div>
+        </section>
+
+        <!-- ── INTERACTIVE TRADING CHART ── -->
+        <section aria-label="Live Chart">
+            <div class="section-title">📉 Live M5 Action Chart</div>
+            <div class="card glass-card chart-container" id="tv-chart-container" style="height: 400px; padding: 0; overflow: hidden; position: relative;">
+                <div id="chart-loading" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); color:var(--text-muted); z-index:10; pointer-events:none;">Waiting for candle data...</div>
+                <div id="zones-layer" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; overflow: hidden;"></div>
             </div>
         </section>
 

@@ -62,6 +62,17 @@ app.get('/api/config', (req, res) => {
     });
 });
 
+// Fetch historical candles for the chart
+app.get('/api/candles', async (req, res) => {
+    try {
+        const { getCandles } = require('./services/derivWs');
+        const candles = await getCandles('M5', 200); // Get last 200 M5 candles
+        res.json(candles);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Update engine configuration
 app.post('/api/config', express.json(), (req, res) => {
     const { updateConfig } = require('./logic/smcEngine');

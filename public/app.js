@@ -62,8 +62,220 @@
             }
         }
 
+        // ── TradingView Chart Integration ────────────────────────────────
+        let chart = null;
+        let candleSeries = null;
+        let activeTradeLines = [];
+        let currentZones = [];
+        const zonesLayer = $('zones-layer');
+
+        function syncZonesPosition() {
+            if (!chart || !candleSeries || !currentZones.length) return;
+            const containerWidth = zonesLayer.clientWidth;
+
+            currentZones.forEach(z => {
+                if (!z.el) return;
+                
+                // Calculate Y coordinates (Top and Bottom)
+                let yTop = candleSeries.priceToCoordinate(z.top);
+                let yBottom = candleSeries.priceToCoordinate(z.bottom);
+                if (yTop === null || yBottom === null) {
+                    z.el.style.display = 'none';
+                    return;
+                }
+
+                // Check if the zone is completely off-screen vertically
+                const maxVisiblePrice = candleSeries.coordinateToPrice(0);
+                const minVisiblePrice = candleSeries.coordinateToPrice(zonesLayer.clientHeight);
+                if (maxVisiblePrice !== null && minVisiblePrice !== null) {
+                    // In trading, lower coordinate = higher price. 
+                    // FVG/OB top is higher price, bottom is lower price.
+                    if (z.bottom > maxVisiblePrice || z.top < minVisiblePrice) {
+                        z.el.style.display = 'none';
+                        return;
+                    }
+                }
+
+                const topPx = Math.min(yTop, yBottom);
+                const heightPx = Math.abs(yBottom - yTop);
+
+                // Calculate X coordinate
+                let xLeft = chart.timeScale().timeToCoordinate(z.time);
+                if (xLeft === null) {
+                    // If time is not visible/not loaded, assume it's off-screen left
+                    xLeft = 0;
+                }
+                
+                z.el.style.display = 'flex';
+                z.el.style.top = `${topPx}px`;
+                z.el.style.left = `${xLeft}px`;
+                z.el.style.width = `${containerWidth - xLeft}px`; // Extend to the right edge
+                z.el.style.height = `${Math.max(heightPx, 1)}px`;
+            });
+        }
+
+        async function initChart() {
+            const container = document.getElementById('tv-chart-container');
+            const loading = document.getElementById('chart-loading');
+            
+            chart = LightweightCharts.createChart(container, {
+                layout: { background: { type: 'solid', color: 'transparent' }, textColor: '#e6edf3' },
+                grid: { vertLines: { color: 'rgba(255,255,255,0.05)' }, horzLines: { color: 'rgba(255,255,255,0.05)' } },
+                crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+                rightPriceScale: { borderColor: 'rgba(255,255,255,0.1)' },
+                timeScale: { borderColor: 'rgba(255,255,255,0.1)', timeVisible: true, secondsVisible: false }
+            });
+
+            candleSeries = chart.addCandlestickSeries({
+                upColor: '#3fb950', downColor: '#f85149', borderVisible: false,
+                wickUpColor: '#3fb950', wickDownColor: '#f85149'
+            });
+
+            // Handle Resize
+            new ResizeObserver(entries => {
+                if (entries.length === 0 || entries[0].target !== container) return;
+                const newRect = entries[0].contentRect;
+                chart.applyOptions({ height: newRect.height, width: newRect.width });
+                syncZonesPosition();
+            }).observe(container);
+
+            chart.timeScale().subscribeVisibleLogicalRangeChange(syncZonesPosition);
+            chart.timeScale().subscribeVisibleTimeRangeChange(syncZonesPosition);
+
+            let retries = 5;
+            while (retries > 0) {
+                try {
+                    const res = await fetch('/api/candles');
+                    const data = await res.json();
+                    if (res.ok && Array.isArray(data) && data.length > 0) {
+                        const formatted = data.map(c => ({
+                            time: c.time,
+                            open: c.open, high: c.high, low: c.low, close: c.close
+                        }));
+                        candleSeries.setData(formatted);
+                        loading.style.display = 'none';
+                        break;
+                    } else {
+                        throw new Error(data.error || "Invalid data format");
+                    }
+                } catch (err) {
+                    console.warn(`Failed to load historical candles. Retrying... (${retries} left)`, err);
+                    retries--;
+                    if (retries === 0) {
+                        loading.textContent = "Error loading chart data";
+                    } else {
+                        await new Promise(r => setTimeout(r, 3000)); // wait 3s before retry
+                    }
+                }
+            }
+        }
+
+        function updateChart(state) {
+            if (!candleSeries) return;
+            
+            // 1. Update Last Candle
+            if (state.lastM5 && state.lastM5.time) {
+                // Ensure time is in seconds (unix epoch)
+                const tvTime = state.lastM5.time; 
+                candleSeries.update({
+                    time: tvTime,
+                    open: state.lastM5.open,
+                    high: state.lastM5.high,
+                    low: state.lastM5.low,
+                    close: state.lastM5.close
+                });
+            }
+
+            // 2. Draw Active Trade Levels & Midpoint
+            if (activeTradeLines) {
+                activeTradeLines.forEach(line => candleSeries.removePriceLine(line));
+                activeTradeLines = [];
+            }
+
+            // Draw Midpoint
+            if (state.tradingRange && state.tradingRange.midpoint) {
+                activeTradeLines.push(candleSeries.createPriceLine({
+                    price: state.tradingRange.midpoint,
+                    color: 'rgba(255, 255, 255, 0.4)',
+                    lineWidth: 1,
+                    lineStyle: LightweightCharts.LineStyle.Dashed,
+                    axisLabelVisible: true,
+                    title: 'Midpoint'
+                }));
+            }
+
+            // Draw ChoCh Target
+            if (state.botState === 'WAITING_CHOCH' && state.pendingChoch && state.pendingChoch.chochTargetPrice) {
+                activeTradeLines.push(candleSeries.createPriceLine({
+                    price: state.pendingChoch.chochTargetPrice,
+                    color: '#d2a8ff', // Light purple for ChoCh
+                    lineWidth: 2,
+                    lineStyle: LightweightCharts.LineStyle.Dashed,
+                    axisLabelVisible: true,
+                    title: 'ChoCh Target'
+                }));
+            }
+
+            // Draw Active Trade
+            if (state.botState === 'MONITORING_TRADE' && state.activeTrade) {
+                const at = state.activeTrade;
+                activeTradeLines.push(candleSeries.createPriceLine({
+                    price: at.entry,
+                    color: '#58a6ff',
+                    lineWidth: 2,
+                    lineStyle: LightweightCharts.LineStyle.Solid,
+                    axisLabelVisible: true,
+                    title: 'Entry'
+                }));
+                activeTradeLines.push(candleSeries.createPriceLine({
+                    price: at.sl,
+                    color: '#f85149',
+                    lineWidth: 2,
+                    lineStyle: LightweightCharts.LineStyle.Dashed,
+                    axisLabelVisible: true,
+                    title: 'SL'
+                }));
+                activeTradeLines.push(candleSeries.createPriceLine({
+                    price: at.tp1,
+                    color: '#e3b341',
+                    lineWidth: 2,
+                    lineStyle: LightweightCharts.LineStyle.Dashed,
+                    axisLabelVisible: true,
+                    title: 'TP1'
+                }));
+                if (at.tp2) {
+                    activeTradeLines.push(candleSeries.createPriceLine({
+                        price: at.tp2,
+                        color: '#3fb950',
+                        lineWidth: 2,
+                        lineStyle: LightweightCharts.LineStyle.Dashed,
+                        axisLabelVisible: true,
+                        title: 'TP2'
+                    }));
+                }
+            }
+
+            // 3. Draw HTML Overlay Zones
+            if (state.zones && JSON.stringify(state.zones.map(z=>z.time)) !== JSON.stringify(currentZones.map(z=>z.time))) {
+                // Clear old DOM if zones changed
+                zonesLayer.innerHTML = '';
+                currentZones = state.zones.map(z => {
+                    const div = document.createElement('div');
+                    const isSell = z.type.includes('SELL'); 
+                    div.className = `smc-zone ${isSell ? 'sell' : 'buy'}`;
+                    div.textContent = z.name;
+                    zonesLayer.appendChild(div);
+                    return { ...z, el: div };
+                });
+                syncZonesPosition();
+            } else if (state.zones) {
+                syncZonesPosition(); // Update positions on new price ticks
+            }
+        }
+
         // ── Render ────────────────────────────────────────────────────────
         function render(state) {
+            updateChart(state);
             // Bot State card
             const stateClass = stateBadgeClass(state.botState);
             $('val-bot-state').innerHTML = `<span class="badge ${stateClass}">${state.botState || '—'}</span>`;
@@ -264,48 +476,6 @@
 
         forceScanBtn.addEventListener('click', forceScan);
 
-        // ── Config Panel ────────────────────────────────────────────────
-        const toggleH4 = document.getElementById('toggle-h4-filter');
-        const toggleTrailing = document.getElementById('toggle-trailing-stop');
-        const toggleCE = document.getElementById('toggle-ce-entry');
-
-        async function fetchConfig() {
-            try {
-                const res = await fetch('/api/config');
-                const config = await res.json();
-                toggleH4.checked = config.USE_H4_FILTER;
-                toggleTrailing.checked = config.USE_TRAILING_STOP;
-                toggleCE.checked = config.USE_CE_ENTRY;
-            } catch(e) {
-                console.error('Failed to load config', e);
-            }
-        }
-
-        async function updateConfig(key, value) {
-            try {
-                await fetch('/api/config', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ [key]: value })
-                });
-            } catch(e) {
-                console.error('Failed to update config', e);
-            }
-        }
-
-        toggleH4.addEventListener('change', (e) => {
-            updateConfig('USE_H4_FILTER', e.target.checked);
-        });
-
-        toggleTrailing.addEventListener('change', (e) => {
-            updateConfig('USE_TRAILING_STOP', e.target.checked);
-        });
-
-        toggleCE.addEventListener('change', (e) => {
-            updateConfig('USE_CE_ENTRY', e.target.checked);
-        });
-
-        fetchConfig();
 
         function connectSSE() {
             const evtSource = new EventSource('/events');
@@ -340,3 +510,4 @@
         }
 
         connectSSE();
+        initChart(); // Start the chart on load

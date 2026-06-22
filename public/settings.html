@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WickHunter XAU — Settings</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel='stylesheet' href='style.css' />
+</head>
+<body>
+
+    <header>
+        <div class="header-left">
+            <div class="logo-icon">⚙️</div>
+            <div class="header-title">
+                <h1>Engine Settings</h1>
+                <p>WickHunter XAU Configuration</p>
+            </div>
+        </div>
+        <div class="header-actions">
+            <a href="index.html" class="control-button" style="text-decoration: none;">
+                🔙 Back to Dashboard
+            </a>
+        </div>
+    </header>
+
+    <main>
+        <!-- ── CONTROL PANEL ── -->
+        <section aria-label="Control Panel">
+            <div class="section-title">🎛️ Engine Configuration</div>
+            <div class="card glass-card control-panel-card">
+                <div class="control-grid">
+                    <div class="control-item">
+                        <div class="control-text">
+                            <h3>🛡️ Prop Firm Mode (H4 Filter)</h3>
+                            <p>กรองเข้าเทรดเฉพาะไม้ที่สอดคล้องกับเทรนด์ H4 (เน้น Win Rate สูง, ปลอดภัย)</p>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="toggle-h4-filter">
+                            <span class="slider round"></span>
+                        </label>
+                    </div>
+                    <div class="control-item">
+                        <div class="control-text">
+                            <h3>🚀 Trailing Mode (Partial TP 50%)</h3>
+                            <p>ปิดกำไร 50% ที่ 2R และเลื่อน SL บังหน้าทุนสำหรับไม้ที่เหลือ (Let profit run)</p>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="toggle-trailing-stop">
+                            <span class="slider round"></span>
+                        </label>
+                    </div>
+                    <div class="control-item">
+                        <div class="control-text">
+                            <h3>🎯 CE Mode (50% Deep Entry)</h3>
+                            <p>ดักรอให้ราคาย่อลึกถึงระดับ 50% ของโซนก่อนเท่านั้น กรองสัญญาณตื้นๆ และบีบ SL ให้แคบ</p>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="toggle-ce-entry">
+                            <span class="slider round"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script src='settings.js'></script>
+</body>
+</html>

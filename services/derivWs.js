@@ -222,6 +222,35 @@ function startDerivStream() {
                 console.error('❌ Process tick failed:', error.message);
             });
             aggregateM1Tick(currentPrice, tickTimeMs);
+
+            // [Fix] Update live M5 candle state directly for the frontend TradingView chart
+            const epoch = response.tick.epoch;
+            const m5Epoch = epoch - (epoch % 300); // Floor to nearest 5 mins
+            const state = dashboardState.state;
+            
+            if (!state.lastM5 || state.lastM5.time !== m5Epoch) {
+                // New M5 candle started
+                dashboardState.update({
+                    lastM5: {
+                        time: m5Epoch,
+                        open: currentPrice,
+                        high: currentPrice,
+                        low: currentPrice,
+                        close: currentPrice
+                    }
+                });
+            } else {
+                // Update existing M5 candle
+                dashboardState.update({
+                    lastM5: {
+                        time: m5Epoch,
+                        open: state.lastM5.open,
+                        high: Math.max(state.lastM5.high, currentPrice),
+                        low: Math.min(state.lastM5.low, currentPrice),
+                        close: currentPrice
+                    }
+                });
+            }
         }
 
         // 3. จัดการ Error แบบ Global (ถ้าไม่ได้ผูกกับ req_id)

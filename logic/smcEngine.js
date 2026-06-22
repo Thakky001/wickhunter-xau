@@ -264,12 +264,7 @@ async function checkMarketLogic() {
             dashboardState.update({
                 botState: currentState,
                 zonesFound: { fvg: fvgs.length, ob: obs.length, total: allZones.length },
-                lastM5: {
-                    open: closedM5Candle.open,
-                    high: closedM5Candle.high,
-                    low: closedM5Candle.low,
-                    close: closedM5Candle.close
-                },
+                zones: allZones, // ส่งพิกัดกล่องโซนทั้งหมดให้ Frontend
                 tradingRange: tradingRange,
                 activeTrade: activeTrade
             });
@@ -442,7 +437,7 @@ async function checkMarketLogic() {
                             lastTickAt = Date.now();
                             lastTradedCandleTime = closedM5Candle.time;
                             currentState = STATES.WAITING_CHOCH;
-                            dashboardState.update({ botState: currentState });
+                            dashboardState.update({ botState: currentState, pendingChoch: pendingChoch });
 
                             const requiredBreakPrice = paResult.direction === 'BUY'
                                 ? chochResult.targetPrice + ENGINE_CONFIG.CHOCH_M1_MARGIN
