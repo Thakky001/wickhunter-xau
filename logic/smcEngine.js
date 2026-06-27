@@ -1,5 +1,15 @@
 const { sendSignal } = require('../services/telegram');
-const { findFVG, findOrderBlock, checkPriceActionInZone, checkRecentPA, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep, checkM1ChochBreak, checkM5BOS, findM5FVG, calculateDynamicBuffers } = require('./smcMath');
+const { 
+    findFVG, 
+    findOrderBlock, 
+    checkPriceActionInZone, 
+    checkRecentPA, 
+    checkChoCh, 
+    getHTFTrend, 
+    getTradingRange,
+    checkIDMSweep,
+    calculateDynamicBuffers 
+} = require('./smcMath');
 const { getCandles } = require('../services/derivWs');
 const dashboardState = require('../services/dashboardState');
 const sheets = require('../services/sheets');
@@ -37,6 +47,7 @@ const ENGINE_CONFIG = {
     SL_BUFFER: 2.0,              // ระยะเผื่อสะบัดปลายไส้ (2.0 USD หรือ 200 จุด)
     SPREAD_BUFFER: 0.5,          // [NEW] ระยะเผื่อสเปรดสเปรดสำหรับไม้ SELL (0.5 USD หรือ 50 จุด)
     USE_ATR_BUFFER: true,        // [ATR] Toggle เปิด/ปิด Dynamic Buffers
+    ATR_SL_MULTIPLIER: 1.0,      // [ATR] เพิ่มเป็น 1.0 ตามแผนลด drawdown
     ATR_PERIOD: 14,              // [ATR] ATR period
     ATR_BASELINE_PERIOD: 50,     // [ATR] Baseline period for volatility ratio
     SPREAD_ATR_MULT: 0.25,       // [ATR] Multiplier for spread buffer
@@ -87,6 +98,8 @@ let pendingContinuation = null; // [Continuation] เก็บข้อมูล
 
 let currentDayStr = null;      // [Circuit Breaker] เก็บวันที่ปัจจุบัน
 let dailyFullSlCount = 0;      // [Circuit Breaker] นับจำนวน Full SL ในวันนี้
+let consecutiveDailyLossCount = 0;
+let cooldownUntilEpoch = 0;
 
 function clearActiveSignal() {
     referenceWickPrice = 0;
@@ -140,13 +153,39 @@ async function checkMarketLogic() {
         }
 
         if (dailyFullSlCount >= ENGINE_CONFIG.MAX_DAILY_LOSS_COUNT) {
+            consecutiveDailyLossCount++;
+            if (consecutiveDailyLossCount >= 3) {
+                cooldownUntilEpoch = (currentM5 ? currentM5.time : Math.floor(Date.now() / 1000)) + (48 * 60 * 60);
+                consecutiveDailyLossCount = 0;
+                console.log(`\n🛑 [COOLDOWN] ขาดทุนติดกัน 3 วัน! ระบบพักร้อน 2 วัน`);
+                if (currentState === STATES.WAITING_CHOCH || currentState === STATES.SCANNING) {
+                    currentState = STATES.SCANNING;
+                    clearActiveSignal();
+                }
+            }
             console.log(`🛡️ [Circuit Breaker Active] วันนี้โดน Full SL ครบ ${dailyFullSlCount} ไม้แล้ว หยุดเทรดชั่วคราว`);
-            return;
+        } else {
+            consecutiveDailyLossCount = 0;
+        }
+
+        if (currentM5 && currentM5.time < cooldownUntilEpoch) {
+            if (currentState === STATES.SCANNING || currentState === STATES.WAITING_CHOCH) {
+                currentState = STATES.SCANNING;
+                clearActiveSignal();
+                isCheckingMarket = false;
+                return;
+            }
         }
 
         if (currentState === STATES.SCANNING) {
             const currentHour = new Date().getUTCHours();
             const currentMinute = new Date().getUTCMinutes();
+            
+            // Session Filter: Trade only between 07:00 UTC and 16:00 UTC
+            if (currentHour < 7 || currentHour > 16) {
+                isCheckingMarket = false;
+                return;
+            }
 
             // [API Fix] หน่วงเวลา 2 นาที เพื่อให้ Server อัปเดตแท่ง H1 ล่าสุดจนเสร็จสมบูรณ์ก่อนดึง
             // [Fix] ใช้ตัวแปรชั่วคราว ป้องกัน cache หายถ้า API ล้มเหลว
@@ -320,6 +359,15 @@ async function checkMarketLogic() {
                     const paResult = checkRecentPA(closedM5Array, zone, 30, depthPct);
 
                     if (paResult.isValid) {
+                        const direction = paResult.direction;
+
+                        // [Liquidity Sweep Check]
+                        const isSwept = checkIDMSweep(closedM5Array, direction, paResult.candleIndex);
+                        if (!isSwept) {
+                            // console.log(`   🚫 ข้าม PA เพราะไม่มี Liquidity Sweep (IDM) นำหน้า`);
+                            continue;
+                        }
+
                         // [Zone Violation Check] ตรวจสอบว่าโซนถูกทำลายไปแล้วหรือยัง (ราคาปิดทะลุโซน)
                         let zoneViolated = false;
                         for (let i = paResult.candleIndex; i < closedM5Array.length; i++) {
