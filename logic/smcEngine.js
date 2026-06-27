@@ -249,7 +249,9 @@ async function checkMarketLogic() {
             const now = new Date().toLocaleTimeString('th-TH');
             console.log(`\n─────────────────────────────────────────`);
             console.log(`🔍 [SCAN] ${now} | State: ${currentState}`);
-            console.log(`   📊 H1 Zones พบทั้งหมด: ${allZones.length} โซน (FVG: ${fvgs.length}, OB: ${obs.length})`);
+            const filteredFvgs = allZones.filter(z => z.name.includes('FVG'));
+            const filteredObs = allZones.filter(z => z.name.includes('OB'));
+            console.log(`   📊 H1 Zones พบทั้งหมด: ${allZones.length} โซน (FVG: ${filteredFvgs.length}, OB: ${filteredObs.length})`);
             if (tradingRange) {
                 console.log(`   📐 [Midpoint] Median Close 24H: ${tradingRange.midpoint.toFixed(2)} | Range: ${tradingRange.low.toFixed(2)} - ${tradingRange.high.toFixed(2)}`);
             }
@@ -266,7 +268,7 @@ async function checkMarketLogic() {
             // อัปเดต Dashboard State และ Google Sheets หลังสแกนเสร็จ
             dashboardState.update({
                 botState: currentState,
-                zonesFound: { fvg: fvgs.length, ob: obs.length, total: allZones.length },
+                zonesFound: { fvg: filteredFvgs.length, ob: filteredObs.length, total: allZones.length },
                 zones: allZones, // ส่งพิกัดกล่องโซนทั้งหมดให้ Frontend
                 tradingRange: tradingRange,
                 activeTrade: activeTrade
