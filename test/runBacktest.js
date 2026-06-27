@@ -28,7 +28,9 @@ function getPeriodName(timeMs) {
     if (diff <= ONE_MONTH_MS) return '1M';
     if (diff <= 3 * ONE_MONTH_MS) return '3M';
     if (diff <= 6 * ONE_MONTH_MS) return '6M';
-    return '1Y';
+    if (diff <= 12 * ONE_MONTH_MS) return '1Y';
+    if (diff <= 24 * ONE_MONTH_MS) return '2Y';
+    return '3Y';
 }
 
 let currentState = 'SCANNING'; 
@@ -49,6 +51,8 @@ let results = {
     '3M': { trades: 0, wins: 0, losses: 0, pnl: 0 },
     '6M': { trades: 0, wins: 0, losses: 0, pnl: 0 },
     '1Y': { trades: 0, wins: 0, losses: 0, pnl: 0 },
+    '2Y': { trades: 0, wins: 0, losses: 0, pnl: 0 },
+    '3Y': { trades: 0, wins: 0, losses: 0, pnl: 0 },
 };
 
 let h1Index = 0;

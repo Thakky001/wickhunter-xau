@@ -366,22 +366,16 @@ function checkChoCh(m5Candles, direction, paIndex = null) {
 }
 
 // ─── HTF Trend Filter ─────────────────────────────────────────────────────────
-// วิเคราะห์แนวโน้ม H4 จากข้อมูล H1 ที่มีอยู่แล้ว (ไม่ใช้ API เพิ่มแม้แต่ครั้งเดียว)
-// เปรียบเทียบโครงสร้าง HH/HL (Bullish) กับ LH/LL (Bearish) ใน 3 กลุ่ม H4
-function getHTFTrend(h1Candles) {
-    // ต้องการ 20 แท่ง H1 ขึ้นไป (≈ 5 แท่ง H4) เพื่อประเมินแนวโน้ม
-    if (h1Candles.length < 20) return 'NEUTRAL';
+// วิเคราะห์แนวโน้ม H4 จากข้อมูล H4 Candles ที่จัดกลุ่มแล้ว
+// เปรียบเทียบโครงสร้าง HH/HL (Bullish) กับ LH/LL (Bearish) จาก 5 แท่ง H4 ล่าสุด
+function getHTFTrend(h4Candles) {
+    // ต้องการ 5 แท่ง H4 ขึ้นไป เพื่อประเมินแนวโน้ม
+    if (!h4Candles || h4Candles.length < 5) return 'NEUTRAL';
 
-    const last20 = h1Candles.slice(-20);
+    const last5 = h4Candles.slice(-5);
 
-    // จำลองแท่ง H4 จาก H1 (กลุ่มละ 4 แท่ง)
-    const groups = [];
-    for (let i = 0; i < 5; i++) {
-        groups.push(last20.slice(i * 4, (i + 1) * 4));
-    }
-
-    const highs = groups.map(g => Math.max(...g.map(c => c.high)));
-    const lows = groups.map(g => Math.min(...g.map(c => c.low)));
+    const highs = last5.map(c => c.high);
+    const lows = last5.map(c => c.low);
 
     // Bullish: High ล่าสุดสูงกว่ากลุ่มก่อนหน้า และ Low ยกสูงขึ้น
     const isBullish = highs[4] > highs[3] && highs[3] > highs[2] && lows[4] > lows[3];

@@ -190,22 +190,19 @@ async function checkMarketLogic() {
             const allFoundZones = [...fvgs, ...obs];
 
             // กรองหาเฉพาะโซนที่สดใหม่ย้อนหลังไม่เกินอายุที่กำหนด (ใช้ Timestamp จริง อิงจากแท่งล่าสุดแก้ปัญหาเสาร์อาทิตย์)
-            const latestH1TimeMs = new Date(closedH1Candles[closedH1Candles.length - 1].time).getTime();
+            const latestH1TimeMs = new Date(closedH1Candles[closedH1Candles.length - 1].time * 1000).getTime();
             const maxAgeMs = ENGINE_CONFIG.MAX_ZONE_AGE_HOURS * 60 * 60 * 1000;
             const allZones = allFoundZones.filter(z => {
                 if (!z.time) return true;
-                const zoneTimeMs = new Date(z.time).getTime();
+                const zoneTimeMs = new Date(z.time * 1000).getTime();
                 return (latestH1TimeMs - zoneTimeMs) <= maxAgeMs;
             });
-
-            // [HTF Filter] คำนวณทิศทาง H4 จาก H1 ที่มีอยู่แล้ว ไม่ใช้ API เพิ่ม
-            const htfTrend = getHTFTrend(closedH1Candles);
 
             let h4Candles = [];
             let currentH4 = null;
             for (let h1 of closedH1Candles) {
                 if (!h1.time) continue;
-                const d = new Date(h1.time);
+                const d = new Date(h1.time * 1000);
                 // [Fix] ปรับเวลาให้ตรงกับ Broker Server (UTC+2 สำหรับ Exness/ICMarkets)
                 const brokerHour = (d.getUTCHours() + ENGINE_CONFIG.BROKER_UTC_OFFSET) % 24;
                 const brokerDate = new Date(d.getTime() + ENGINE_CONFIG.BROKER_UTC_OFFSET * 3600000);
@@ -230,7 +227,9 @@ async function checkMarketLogic() {
             }
             if (currentH4) h4Candles.push(currentH4);
 
-            const h4Trend = ENGINE_CONFIG.USE_H4_FILTER ? getHTFTrend(h4Candles) : null;
+            // [HTF Filter] คำนวณทิศทาง H4 จาก H4 Candles ที่จัดกลุ่มแล้ว
+            const htfTrend = getHTFTrend(h4Candles);
+            const h4Trend = ENGINE_CONFIG.USE_H4_FILTER ? htfTrend : null;
 
             const tradingRange = getTradingRange(closedH1Candles);
 
@@ -449,7 +448,8 @@ async function checkMarketLogic() {
                                 `📍 SL โดยประมาณ: ${preCalcSL.toFixed(2)}\n` +
                                 `⏱️ หมดเวลาใน: ${ENGINE_CONFIG.CHOCH_WAIT_TIMEOUT_MS / 60000} นาที`;
 
-                            await sendSignal(preAlertMsg);
+                            // [User Request: ซ่อน Alert จุดเตรียมเข้า เพื่อลดความรำคาญ]
+                            // await sendSignal(preAlertMsg);
 
                             dashboardState.addSignal({
                                 type: 'PRE_ALERT',
@@ -459,13 +459,13 @@ async function checkMarketLogic() {
                                 sl: preCalcSL,
                                 time: new Date().toISOString()
                             });
-                            sheets.appendSignal({
-                                type: 'PRE_ALERT',
-                                zone: zone.name,
-                                direction: paResult.direction,
-                                chochTarget: chochResult.targetPrice,
-                                sl: preCalcSL
-                            });
+                            // sheets.appendSignal({
+                            //     type: 'PRE_ALERT',
+                            //     zone: zone.name,
+                            //     direction: paResult.direction,
+                            //     chochTarget: chochResult.targetPrice,
+                            //     sl: preCalcSL
+                            // });
 
                             break; // ออกจาก zone loop
                         }
@@ -642,16 +642,16 @@ async function checkMarketLogic() {
                             tp2: tp2,
                             time: new Date().toISOString()
                         });
-                        sheets.appendSignal({
-                            type: 'PRE_ALERT',
-                            zone: zone.name,
-                            direction: signalDirection,
-                            entry: referenceWickPrice,
-                            sl: cancelPrice,
-                            tp1: tp1,
-                            tp2: tp2, // [Bug#2 Fix] เพิ่ม TP2 ใน PRE_ALERT
-                            currentPrice: closedM5Candle.close
-                        });
+                        // sheets.appendSignal({
+                        //     type: 'PRE_ALERT',
+                        //     zone: zone.name,
+                        //     direction: signalDirection,
+                        //     entry: referenceWickPrice,
+                        //     sl: cancelPrice,
+                        //     tp1: tp1,
+                        //     tp2: tp2, // [Bug#2 Fix] เพิ่ม TP2 ใน PRE_ALERT
+                        //     currentPrice: closedM5Candle.close
+                        // });
 
                         const previewMsg = `⏳ <b>เตรียมตัว! พบการกลับตัวในโซน ${zone.name} H1</b>\n\n` +
                             `ดักรอการ <b>เบรกปลายไส้ (M5)</b> ฝั่ง ${signalDirection}\n\n` +
@@ -660,7 +660,7 @@ async function checkMarketLogic() {
                             `🎯 <b>TP1 (1:2):</b> ${tp1.toFixed(2)}\n` +
                             `🎯 <b>TP2 (1:3):</b> ${tp2.toFixed(2)}`; // [Bug#2 Fix] แสดง TP2 ด้วย
 
-                        await sendSignal(previewMsg);
+                        // await sendSignal(previewMsg);
                         break;
                     }
                 } // End of for loop
@@ -753,7 +753,7 @@ async function checkMarketLogic() {
                                 `📦 M5 FVG Zone: ${fvg.bottom.toFixed(2)} - ${fvg.top.toFixed(2)}\n\n` +
                                 `⏳ รอราคา pullback มาที่ FVG แล้วมี PA rejection\n` +
                                 `⏱️ หมดเวลาใน: ${ENGINE_CONFIG.CONT_FVG_TIMEOUT_MS / 60000} นาที`;
-                            await sendSignal(preAlertMsg);
+                            // await sendSignal(preAlertMsg);
                         }
                     } else {
                         console.log(`   ❌ [Continuation] ไม่พบ M5 FVG ระหว่าง BOS impulse`);
@@ -880,15 +880,15 @@ async function expireWaitingSignal() {
         sl,
         time: new Date().toISOString()
     });
-    sheets.appendSignal({
-        type: 'EXPIRED',
-        direction,
-        entry,
-        sl
-    });
+    // sheets.appendSignal({
+    //     type: 'EXPIRED',
+    //     direction,
+    //     entry,
+    //     sl
+    // });
     clearActiveSignal();
 
-    await sendSignal(`⌛ <b>หมดอายุสัญญาณ ${direction}</b>\n\nรอเบรกนานเกิน 15 นาที แต่ราคาไม่ถึง Entry/SL ระบบกลับไปสแกนหาโซนใหม่แล้ว`);
+    // await sendSignal(`⌛ <b>หมดอายุสัญญาณ ${direction}</b>\n\nรอเบรกนานเกิน 15 นาที แต่ราคาไม่ถึง Entry/SL ระบบกลับไปสแกนหาโซนใหม่แล้ว`);
 }
 
 // ─── [M1 ChoCh] หมดเวลารอ ChoCh break จาก M1 ────────────────────────────
@@ -908,14 +908,14 @@ async function expireWaitingChoch() {
         chochTarget: target,
         time: new Date().toISOString()
     });
-    sheets.appendSignal({
-        type: 'EXPIRED',
-        direction,
-        chochTarget: target
-    });
+    // sheets.appendSignal({
+    //     type: 'EXPIRED',
+    //     direction,
+    //     chochTarget: target
+    // });
     clearActiveSignal();
 
-    await sendSignal(`⌛ <b>หมดอายุ WAITING_CHOCH ${direction}</b>\n\nรอ M1 ยืนยัน ChoCh นานเกิน ${ENGINE_CONFIG.CHOCH_WAIT_TIMEOUT_MS / 60000} นาที แต่ราคาไม่ทะลุเป้า ${target > 0 ? target.toFixed(2) : '-'}\nระบบกลับสู่โหมดสแกนหาโซนใหม่...`);
+    // await sendSignal(`⌛ <b>หมดอายุ WAITING_CHOCH ${direction}</b>\n\nรอ M1 ยืนยัน ChoCh นานเกิน ${ENGINE_CONFIG.CHOCH_WAIT_TIMEOUT_MS / 60000} นาที แต่ราคาไม่ทะลุเป้า ${target > 0 ? target.toFixed(2) : '-'}\nระบบกลับสู่โหมดสแกนหาโซนใหม่...`);
 }
 
 async function checkWaitingGuard() {
@@ -959,7 +959,7 @@ async function checkWaitingGuard() {
             clearActiveSignal();
             dashboardState.update({ botState: currentState });
             console.log(`⌛ [Continuation] FVG Retest timeout (${ENGINE_CONFIG.CONT_FVG_TIMEOUT_MS / 60000} นาที) → กลับ SCANNING`);
-            await sendSignal(`⌛ <b>หมดเวลา Continuation ${contDir}</b>\n\nรอ pullback มาที่ FVG (${contFvg.bottom.toFixed(2)}-${contFvg.top.toFixed(2)}) นานเกิน ${ENGINE_CONFIG.CONT_FVG_TIMEOUT_MS / 60000} นาที\nระบบกลับสู่โหมดสแกนใหม่...`);
+            // await sendSignal(`⌛ <b>หมดเวลา Continuation ${contDir}</b>\n\nรอ pullback มาที่ FVG (${contFvg.bottom.toFixed(2)}-${contFvg.top.toFixed(2)}) นานเกิน ${ENGINE_CONFIG.CONT_FVG_TIMEOUT_MS / 60000} นาที\nระบบกลับสู่โหมดสแกนใหม่...`);
         } catch (error) {
             console.error("❌ [SMC Engine Error] expireContinuation failed:", error);
         } finally {
@@ -1139,16 +1139,32 @@ async function processTickData(currentPrice, source = 'tick') {
                 const tp1Val = activeTrade.tp1;
                 const tp1Sl = activeTrade.sl;
 
-                // เปลี่ยนสถานะทันทีก่อน await เพื่อป้องกัน tick ถัดไปเข้ามาซ้ำ
-                currentState = STATES.SCANNING;
-                clearActiveSignal();
-                dashboardState.update({ botState: currentState });
+                let logMsg = '';
+                
+                if (ENGINE_CONFIG.USE_TRAILING_STOP) {
+                    // Trailing Mode: ล็อกกำไร 50% เลื่อน SL บังทุน และรอ TP2
+                    activeTrade.isTp1Hit = true;
+                    activeTrade.sl = activeTrade.entry; // เลื่อน SL บังหน้าทุน
+                    dashboardState.update({ activeTrade }); // คงสถานะ MONITORING_TRADE ไว้
+                    
+                    logMsg = `🎯 <b>[TP1 HIT - Trailing Active] ออเดอร์ ${direction} ชน TP1 (RR 1:3)</b>\n\n` +
+                        `📍 Entry: ${tp1Entry.toFixed(2)}\n` +
+                        `🎯 TP1: ${tp1Val.toFixed(2)}\n\n` +
+                        `✅ ปิดล็อกกำไรไม้แรกแล้ว!\n` +
+                        `🛡️ ระบบเลื่อน SL บังทุนที่ ${activeTrade.sl.toFixed(2)}\n` +
+                        `🚀 ลุ้นปล่อยรันไม้สองไปที่ TP2 (${activeTrade.tp2.toFixed(2)})${sourceNote}`;
+                } else {
+                    // Normal Mode: ปิดออเดอร์ทั้งหมด
+                    currentState = STATES.SCANNING;
+                    clearActiveSignal();
+                    dashboardState.update({ botState: currentState });
 
-                const logMsg = `🎯 <b>[TP1 HIT] ออเดอร์ ${direction} ชน Take Profit 1 (RR 1:3)</b>\n\n` +
-                    `📍 Entry: ${tp1Entry.toFixed(2)}\n` +
-                    `🎯 TP1: ${tp1Val.toFixed(2)}\n\n` +
-                    `📈 ชนที่ราคา: ${price.toFixed(2)} (เก็บกำไร RR 1:3 ✅)\n` +
-                    `🔄 ระบบกลับไปสแกนหาโอกาสใหม่แล้ว...${sourceNote}`;
+                    logMsg = `🎯 <b>[TP1 HIT] ออเดอร์ ${direction} ชน Take Profit 1 (RR 1:3)</b>\n\n` +
+                        `📍 Entry: ${tp1Entry.toFixed(2)}\n` +
+                        `🎯 TP1: ${tp1Val.toFixed(2)}\n\n` +
+                        `📈 ชนที่ราคา: ${price.toFixed(2)} (เก็บกำไร RR 1:3 ✅)\n` +
+                        `🔄 ระบบกลับไปสแกนหาโอกาสใหม่แล้ว...${sourceNote}`;
+                }
 
                 await sendSignal(logMsg);
 
@@ -1230,15 +1246,15 @@ async function processTickData(currentPrice, source = 'tick') {
                     currentPrice: price,
                     time: new Date().toISOString()
                 });
-                sheets.appendSignal({
-                    type: 'INVALIDATED',
-                    direction: invalidDir,
-                    sl: invalidSL,
-                    currentPrice: price
-                });
+                // sheets.appendSignal({
+                //     type: 'INVALIDATED',
+                //     direction: invalidDir,
+                //     sl: invalidSL,
+                //     currentPrice: price
+                // });
 
                 const sourceNote = source === 'fallback' ? '\n\n⚠️ ตรวจพบจาก TwelveData fallback' : '';
-                await sendSignal(`❌ <b>ยกเลิกการรอ ChoCh ${invalidDir}</b>\n\nกราฟผิดทาง ทะลุจุด SL ที่ <b>${invalidSL.toFixed(2)}</b> ก่อนการทำลายโครงสร้าง ChoCh ระบบกลับสู่โหมดสแกนหาโซนใหม่...${sourceNote}`);
+                // await sendSignal(`❌ <b>ยกเลิกการรอ ChoCh ${invalidDir}</b>\n\nกราฟผิดทาง ทะลุจุด SL ที่ <b>${invalidSL.toFixed(2)}</b> ก่อนการทำลายโครงสร้าง ChoCh ระบบกลับสู่โหมดสแกนหาโซนใหม่...${sourceNote}`);
                 return;
             }
         }
@@ -1253,7 +1269,7 @@ async function processTickData(currentPrice, source = 'tick') {
                 currentState = STATES.SCANNING;
                 clearActiveSignal();
                 dashboardState.update({ botState: currentState });
-                await sendSignal(`❌ <b>ยกเลิก Continuation BUY</b>\n\nราคาทะลุ FVG bottom ที่ ${contFvg.bottom.toFixed(2)}\nระบบกลับไปสแกนใหม่...`);
+                // await sendSignal(`❌ <b>ยกเลิก Continuation BUY</b>\n\nราคาทะลุ FVG bottom ที่ ${contFvg.bottom.toFixed(2)}\nระบบกลับไปสแกนใหม่...`);
                 return;
             }
             if (contDir === 'SELL' && price > (contFvg.top + FVG_BREACH_BUFFER)) {
@@ -1261,7 +1277,7 @@ async function processTickData(currentPrice, source = 'tick') {
                 currentState = STATES.SCANNING;
                 clearActiveSignal();
                 dashboardState.update({ botState: currentState });
-                await sendSignal(`❌ <b>ยกเลิก Continuation SELL</b>\n\nราคาทะลุ FVG top ที่ ${contFvg.top.toFixed(2)}\nระบบกลับไปสแกนใหม่...`);
+                // await sendSignal(`❌ <b>ยกเลิก Continuation SELL</b>\n\nราคาทะลุ FVG top ที่ ${contFvg.top.toFixed(2)}\nระบบกลับไปสแกนใหม่...`);
                 return;
             }
         }
@@ -1303,15 +1319,15 @@ async function processTickData(currentPrice, source = 'tick') {
                     currentPrice: price,
                     time: new Date().toISOString()
                 });
-                sheets.appendSignal({
-                    type: 'INVALIDATED',
-                    direction: invalidDir,
-                    entry: invalidEntry,
-                    sl: invalidSL,
-                    currentPrice: price
-                });
+                // sheets.appendSignal({
+                //     type: 'INVALIDATED',
+                //     direction: invalidDir,
+                //     entry: invalidEntry,
+                //     sl: invalidSL,
+                //     currentPrice: price
+                // });
 
-                await sendSignal(`❌ <b>ยกเลิกสัญญาณ ${invalidDir}</b>\n\nกราฟผิดทาง ทะลุจุด SL ที่ <b>${invalidSL.toFixed(2)}</b> ก่อนการเบรก ระบบกลับสู่โหมดสแกนหาโซนใหม่...${sourceNote}`);
+                // await sendSignal(`❌ <b>ยกเลิกสัญญาณ ${invalidDir}</b>\n\nกราฟผิดทาง ทะลุจุด SL ที่ <b>${invalidSL.toFixed(2)}</b> ก่อนการเบรก ระบบกลับสู่โหมดสแกนหาโซนใหม่...${sourceNote}`);
                 return;
             }
 

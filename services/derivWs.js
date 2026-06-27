@@ -22,10 +22,48 @@ const M1_MIN_TICK_COUNT = 1;
 
 let currentM1 = null;
 let m1Buffer = [];
+let m1Timer = null; // [Fix] Timer สำหรับเช็คเวลาปิดแท่ง M1 ทุกวินาที
 
 function getMinuteKey(timestampMs) {
     const d = timestampMs ? new Date(timestampMs) : new Date();
     return d.getUTCHours() * 60 + d.getUTCMinutes();
+}
+
+function startM1Timer() {
+    if (m1Timer) clearInterval(m1Timer);
+    m1Timer = setInterval(() => {
+        if (!currentM1) return;
+        const currentMinuteKey = getMinuteKey();
+        if (currentM1.minuteKey !== currentMinuteKey) {
+            // หมดนาทีแล้ว สั่งปิดแท่งทันทีโดยไม่ต้องรอ Tick ถัดไป
+            const completedCandle = {
+                open: currentM1.open,
+                high: currentM1.high,
+                low: currentM1.low,
+                close: currentM1.close,
+                time: currentM1.openTime,
+                tickCount: currentM1.tickCount
+            };
+
+            m1Buffer.push(completedCandle);
+            if (m1Buffer.length > M1_BUFFER_SIZE) m1Buffer.shift();
+
+            if (completedCandle.tickCount >= M1_MIN_TICK_COUNT) {
+                require('../logic/smcEngine').processM1Close(completedCandle).catch(err => {
+                    console.error('❌ processM1Close failed:', err.message);
+                });
+            }
+            
+            currentM1 = null; // รอ Tick ใหม่มาสร้างแท่งใหม่
+        }
+    }, 1000);
+}
+
+function stopM1Timer() {
+    if (m1Timer) {
+        clearInterval(m1Timer);
+        m1Timer = null;
+    }
 }
 
 function aggregateM1Tick(price, timestampMs) {
@@ -67,6 +105,7 @@ function aggregateM1Tick(price, timestampMs) {
 
 function resetM1Builder() {
     currentM1 = null;
+    stopM1Timer();
     console.log('🔄 [M1 Builder]: รีเซ็ตแท่ง M1 ที่ค้างอยู่ (WebSocket reconnect)');
 }
 
@@ -186,6 +225,9 @@ function startDerivStream() {
 
         // [Fix] เริ่มรัน Engine (ดึง H1/M5) ทันทีที่เชื่อมต่อสำเร็จ
         require('../logic/smcEngine').startSmartSyncLoop();
+        
+        // [Fix] เริ่มจับเวลาปิดแท่ง M1
+        startM1Timer();
 
         // Heartbeat ทุก 30 วิ (Ping)
         heartbeatTimer = setInterval(() => {
