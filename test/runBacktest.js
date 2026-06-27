@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { findFVG, findOrderBlock, checkPriceActionInZone, checkRecentPA, checkChoCh, getHTFTrend, calculateDynamicBuffers, checkIDMSweep } = require('../logic/smcMath');
+const { findFVG, findOrderBlock, checkRecentPA, getHTFTrend, calculateDynamicBuffers } = require('../logic/smcMath');
 
 // === CONFIGURATION ===
 const RR_TARGET = 3.0;
@@ -47,8 +47,6 @@ let maxDrawdown = 0;
 
 let currentDay = -1;
 let dailyLossCount = 0;
-let consecutiveDailyLossCount = 0;
-let cooldownUntilEpoch = 0;
 
 let results = {
     'Year 1 (Latest)': { trades: 0, wins: 0, losses: 0, pnl: 0 },
@@ -68,41 +66,14 @@ let h1Index = 0;
 for (let i = 50; i < m5Data.length; i++) {
     const currentM5 = m5Data[i];
     const currentTimeMs = currentM5.time * 1000;
-    const currentM5Date = new Date(currentTimeMs);
-    const m5Day = currentM5Date.getUTCDate();
-    const m5Hour = currentM5Date.getUTCHours();
+    const period = getPeriodName(currentTimeMs);
 
-    if (m5Day !== currentDay) {
-        // End of day logic
-        if (dailyLossCount >= MAX_DAILY_LOSS) {
-            consecutiveDailyLossCount++;
-            if (consecutiveDailyLossCount >= 3) {
-                // Trigger cooldown for 2 full days (48 hours)
-                cooldownUntilEpoch = currentM5.time + (48 * 60 * 60);
-                consecutiveDailyLossCount = 0; // Reset after triggering cooldown
-                if (currentState === 'WAITING_CHOCH' || currentState === 'SCANNING') {
-                    currentState = 'SCANNING';
-                    pendingSetup = null;
-                }
-            }
-        } else {
-            consecutiveDailyLossCount = 0;
-        }
-
-        currentDay = m5Day;
+    const dateObj = new Date(currentTimeMs);
+    const dayOfMonth = dateObj.getUTCDate();
+    if (dayOfMonth !== currentDay) {
+        currentDay = dayOfMonth;
         dailyLossCount = 0;
     }
-
-    if (currentM5.time < cooldownUntilEpoch) {
-        // Skip scanning if in cooldown, but allow managing active trades
-        if (currentState === 'SCANNING' || currentState === 'WAITING_CHOCH') {
-            currentState = 'SCANNING';
-            pendingSetup = null;
-            continue;
-        }
-    }
-
-    const period = getPeriodName(currentTimeMs);
 
     while (h1Index < h1Data.length - 1 && h1Data[h1Index + 1].time <= currentM5.time) {
         h1Index++;
@@ -238,9 +209,6 @@ for (let i = 50; i < m5Data.length; i++) {
     }
     else if (currentState === 'SCANNING') {
         if (dailyLossCount >= MAX_DAILY_LOSS) continue;
-        
-        // Session Filter: Only trade between 07:00 UTC and 16:00 UTC
-        if (m5Hour < 7 || m5Hour > 16) continue;
 
         const htfTrend = getHTFTrend(h1Slice);
         const fvgs = findFVG(h1Slice, m5Slice);
@@ -258,16 +226,11 @@ for (let i = 50; i < m5Data.length; i++) {
             const paResult = checkRecentPA(m5Slice, zone, 10);
             if (paResult.isValid) {
                 const direction = zone.type === 'BUY_ZONE' ? 'BUY' : 'SELL';
-                
-                // Liquidity Sweep (IDM) Check
-                const isSwept = checkIDMSweep(m5Slice, direction, paResult.candleIndex);
-                if (!isSwept) continue; // Skip if no liquidity sweep occurred before/at PA
-
                 const recentSlice = m5Slice.slice(-5);
                 let chochTarget = 0;
                 let sl = 0;
 
-                const config = { USE_ATR_BUFFER: true, ATR_SL_MULTIPLIER: 1.0, SL_BUFFER: 0.5, SPREAD_BUFFER: 0.2 };
+                const config = { USE_ATR_BUFFER: true, ATR_SL_MULTIPLIER: 0.5, SL_BUFFER: 0.5, SPREAD_BUFFER: 0.2 };
                 const atr = calculateDynamicBuffers(m5Slice, config).dynamicSLBuffer || 0.5;
 
                 if (direction === 'BUY') {
