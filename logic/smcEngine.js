@@ -127,8 +127,11 @@ async function checkMarketLogic() {
     isCheckingMarket = true;
 
     try {
-        if (!isMarketOpen()) {
+        const marketOpen = isMarketOpen();
+        
+        if (!marketOpen && cachedH1Candles.length > 0) {
             console.log("💤 ตลาดทองคำปิดทำการ บอทเข้าสู่โหมดพักผ่อน...");
+            isCheckingMarket = false;
             return;
         }
 
@@ -141,6 +144,7 @@ async function checkMarketLogic() {
 
         if (dailyFullSlCount >= ENGINE_CONFIG.MAX_DAILY_LOSS_COUNT) {
             console.log(`🛡️ [Circuit Breaker Active] วันนี้โดน Full SL ครบ ${dailyFullSlCount} ไม้แล้ว หยุดเทรดชั่วคราว`);
+            isCheckingMarket = false;
             return;
         }
 
@@ -273,6 +277,12 @@ async function checkMarketLogic() {
                 lastM5Close: closedM5Candle.close,
                 wsStatus: 'CONNECTED'
             });
+
+            if (!isMarketOpen()) {
+                console.log(`💤 อัปเดตข้อมูลย้อนหลัง 48 ชม. ลง Dashboard เรียบร้อยแล้ว เข้าสู่โหมดพักผ่อนช่วงสุดสัปดาห์...`);
+                isCheckingMarket = false;
+                return;
+            }
 
             let foundPA = false;
             let foundValidSignal = false;
