@@ -3,34 +3,36 @@ const path = require('path');
 const { findFVG, findOrderBlock, checkRecentPA, getHTFTrend, calculateDynamicBuffers } = require('../logic/smcMath');
 
 // === CONFIGURATION ===
-const LOT_SIZE = 0.01;
-const DOLLARS_PER_POINT = 1; // 1 Lot = 100 oz. 0.01 Lot = 1 oz. So $1 move = $1.
 const RR_TARGET = 3.0;
 const MAX_DAILY_LOSS = 3;
 
 const testDataDir = path.join(__dirname, 'data');
-const h1File = path.join(testDataDir, 'xau_1y_h1.json');
-const m5File = path.join(testDataDir, 'xau_1y_m5.json');
+const h1File = path.join(testDataDir, 'twelvedata_xau_5y_h1.json');
+const m5File = path.join(testDataDir, 'twelvedata_xau_5y_m5.json');
 
 if (!fs.existsSync(h1File) || !fs.existsSync(m5File)) {
     console.error('❌ Data files not found.');
     process.exit(1);
 }
 
-const h1Data = JSON.parse(fs.readFileSync(h1File, 'utf-8'));
-const m5Data = JSON.parse(fs.readFileSync(m5File, 'utf-8'));
+let h1Data = JSON.parse(fs.readFileSync(h1File, 'utf-8'));
+let m5Data = JSON.parse(fs.readFileSync(m5File, 'utf-8'));
+
+h1Data = h1Data.map(c => ({ ...c, time: c.time || c.epoch }));
+m5Data = m5Data.map(c => ({ ...c, time: c.time || c.epoch }));
 
 const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000;
-const nowMs = m5Data[m5Data.length - 1].time * 1000;
+const lastCandle = m5Data[m5Data.length - 1];
+const nowMs = (lastCandle.time || lastCandle.epoch) * 1000;
 
 function getPeriodName(timeMs) {
     const diff = nowMs - timeMs;
-    if (diff <= ONE_MONTH_MS) return '1M';
-    if (diff <= 3 * ONE_MONTH_MS) return '3M';
-    if (diff <= 6 * ONE_MONTH_MS) return '6M';
-    if (diff <= 12 * ONE_MONTH_MS) return '1Y';
-    if (diff <= 24 * ONE_MONTH_MS) return '2Y';
-    return '3Y';
+    // We want to analyze by year
+    if (diff <= 12 * ONE_MONTH_MS) return 'Year 1 (Latest)';
+    if (diff <= 24 * ONE_MONTH_MS) return 'Year 2';
+    if (diff <= 36 * ONE_MONTH_MS) return 'Year 3';
+    if (diff <= 48 * ONE_MONTH_MS) return 'Year 4';
+    return 'Year 5 (Oldest)';
 }
 
 let currentState = 'SCANNING'; 
@@ -47,13 +49,17 @@ let currentDay = -1;
 let dailyLossCount = 0;
 
 let results = {
-    '1M': { trades: 0, wins: 0, losses: 0, pnl: 0 },
-    '3M': { trades: 0, wins: 0, losses: 0, pnl: 0 },
-    '6M': { trades: 0, wins: 0, losses: 0, pnl: 0 },
-    '1Y': { trades: 0, wins: 0, losses: 0, pnl: 0 },
-    '2Y': { trades: 0, wins: 0, losses: 0, pnl: 0 },
-    '3Y': { trades: 0, wins: 0, losses: 0, pnl: 0 },
+    'Year 1 (Latest)': { trades: 0, wins: 0, losses: 0, pnl: 0 },
+    'Year 2': { trades: 0, wins: 0, losses: 0, pnl: 0 },
+    'Year 3': { trades: 0, wins: 0, losses: 0, pnl: 0 },
+    'Year 4': { trades: 0, wins: 0, losses: 0, pnl: 0 },
+    'Year 5 (Oldest)': { trades: 0, wins: 0, losses: 0, pnl: 0 },
 };
+
+// Fixed Lot Size for Gold (1 lot = 100 oz). 0.02 lot = 2 oz. 
+// So 1 point of movement (e.g., 2000.00 to 2001.00) = $2 PnL
+const FIXED_LOT_SIZE = 0.02;
+const DOLLARS_PER_POINT = FIXED_LOT_SIZE * 100;
 
 let h1Index = 0;
 
@@ -148,21 +154,7 @@ for (let i = 50; i < m5Data.length; i++) {
         }
 
         if (closed) {
-            if (period === '1M') {
-                updateStats('1M', isWin, pnl);
-                updateStats('3M', isWin, pnl);
-                updateStats('6M', isWin, pnl);
-                updateStats('1Y', isWin, pnl);
-            } else if (period === '3M') {
-                updateStats('3M', isWin, pnl);
-                updateStats('6M', isWin, pnl);
-                updateStats('1Y', isWin, pnl);
-            } else if (period === '6M') {
-                updateStats('6M', isWin, pnl);
-                updateStats('1Y', isWin, pnl);
-            } else {
-                updateStats('1Y', isWin, pnl);
-            }
+            updateStats(period, isWin, pnl);
             
             currentBalance += pnl;
             if (currentBalance > peakBalance) peakBalance = currentBalance;
@@ -271,16 +263,25 @@ function updateStats(period, isWin, pnl) {
 
 console.log('\n📊 === BACKTEST RESULTS WITH CIRCUIT BREAKER (Max Loss: 3/day) ===');
 
-for (const period of ['1M', '3M', '6M', '1Y']) {
-    const stat = results[period];
-    const winRate = stat.trades > 0 ? ((stat.wins / stat.trades) * 100).toFixed(2) : 0;
+    let cumulativePnL = 0;
     
-    console.log(`\n📅 ระยะเวลา: ${period} ล่าสุด`);
-    console.log(`   🔸 จำนวนเทรด: ${stat.trades} ไม้`);
-    console.log(`   🟢 ชนะ: ${stat.wins} | 🔴 แพ้: ${stat.losses}`);
-    console.log(`   🎯 Win Rate: ${winRate}%`);
-    console.log(`   💵 PnL สุทธิ: $${stat.pnl.toFixed(2)}`);
-}
+    // Reverse the periods array so Year 5 (Oldest) is printed first
+    const periods = Object.keys(results).reverse();
+    for (const period of periods) {
+        const stat = results[period];
+        if (stat.trades === 0) continue;
+        const winRate = stat.trades > 0 ? ((stat.wins / stat.trades) * 100).toFixed(2) : 0;
+        console.log(`\n📅 ระยะเวลา: ${period}`);
+        console.log(`   🔸 จำนวนเทรด: ${stat.trades} ไม้`);
+        console.log(`   🟢 ชนะ: ${stat.wins} | 🔴 แพ้: ${stat.losses}`);
+        console.log(`   🎯 Win Rate: ${winRate}%`);
+        console.log(`   💵 PnL สุทธิ: $${stat.pnl.toFixed(2)}`);
+        
+        cumulativePnL += stat.pnl;
+    }
+
+    console.log(`\n💰 === TOTAL PROFIT (5 Years, 0.02 Lot fixed) ===`);
+    console.log(`   💵 PnL รวมทั้งหมด: $${cumulativePnL.toFixed(2)}`);
 
 console.log('\n✅ Backtest สำเร็จ!');
 console.log('\n📊 === สถิติแยกตามการปิดกำไร (Dual TP) ===');

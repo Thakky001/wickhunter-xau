@@ -9,7 +9,7 @@ const SYMBOL = 'frxXAUUSD';
 // Constants for time
 const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
 const NOW = Date.now();
-const ONE_YEAR_AGO_EPOCH = Math.floor((NOW - ONE_YEAR_MS) / 1000);
+const TARGET_AGO_EPOCH = Math.floor((NOW - ONE_YEAR_MS) / 1000);
 
 const testDataDir = path.join(__dirname, '../test/data');
 if (!fs.existsSync(testDataDir)) {
@@ -77,7 +77,7 @@ async function fetchAllHistory(granularity, name) {
         
         console.log(`✅ โหลดมาแล้ว ${allCandles.length} แท่ง (ย้อนไปถึง: ${new Date(oldestEpoch * 1000).toLocaleString()})`);
 
-        if (oldestEpoch <= ONE_YEAR_AGO_EPOCH) {
+        if (oldestEpoch <= TARGET_AGO_EPOCH) {
             reachedTarget = true;
         } else {
             // Next request should end just before the oldest epoch we just received
@@ -87,8 +87,8 @@ async function fetchAllHistory(granularity, name) {
         }
     }
 
-    // Filter out candles strictly within 1 year
-    allCandles = allCandles.filter(c => c.epoch >= ONE_YEAR_AGO_EPOCH);
+    // Filter out candles strictly within 3 years
+    allCandles = allCandles.filter(c => c.epoch >= TARGET_AGO_EPOCH);
     
     // Format to our standard format
     const formatted = allCandles.map(c => ({
