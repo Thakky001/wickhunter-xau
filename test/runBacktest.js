@@ -273,23 +273,29 @@ function updateStats(period, isWin, pnl) {
 console.log('\n📊 === BACKTEST RESULTS WITH CIRCUIT BREAKER (Max Loss: 3/day) ===');
 
     let cumulativePnL = 0;
+    let simulatedBalance = 1000;
     
     // Sort the periods chronologically (e.g., 2021-06, 2021-07...)
     const periods = Object.keys(results).sort();
+
+    console.log(`\n### 📊 สรุปผล Backtest รายเดือน (ทุนเริ่มต้น $1,000 | Lot Size คงที่: 0.02 Lot)\n`);
+    console.log(`| เดือน/ปี | จำนวนเทรด | ชนะ | แพ้ | Win Rate | PnL ประจำเดือน | ยอดเงินคงเหลือ (Balance) |`);
+    console.log(`| :--- | :---: | :---: | :---: | :---: | :---: | :---: |`);
+
     for (const period of periods) {
         const stat = results[period];
         if (stat.trades === 0) continue;
-        const winRate = stat.trades > 0 ? ((stat.wins / stat.trades) * 100).toFixed(2) : 0;
-        console.log(`\n📅 ระยะเวลา: ${period}`);
-        console.log(`   🔸 จำนวนเทรด: ${stat.trades} ไม้`);
-        console.log(`   🟢 ชนะ: ${stat.wins} | 🔴 แพ้: ${stat.losses}`);
-        console.log(`   🎯 Win Rate: ${winRate}%`);
-        console.log(`   💵 PnL สุทธิ: $${stat.pnl.toFixed(2)}`);
         
         cumulativePnL += stat.pnl;
+        simulatedBalance += stat.pnl;
+        
+        const winRate = ((stat.wins / stat.trades) * 100).toFixed(2);
+        const pnlStr = stat.pnl >= 0 ? `+` + stat.pnl.toFixed(2) : stat.pnl.toFixed(2);
+        
+        console.log(`| **${period}** | ${stat.trades} | ${stat.wins} | ${stat.losses} | ${winRate}% | $${pnlStr} | **$${simulatedBalance.toFixed(2)}** |`);
     }
 
-    console.log(`\n💰 === TOTAL PROFIT (5 Years, 0.02 Lot fixed) ===`);
+    console.log('\n💰 === TOTAL PROFIT (5 Years, 0.02 Lot fixed) ===');
     console.log(`   💵 PnL รวมทั้งหมด: $${cumulativePnL.toFixed(2)}`);
 
 console.log('\n✅ Backtest สำเร็จ!');
