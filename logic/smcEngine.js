@@ -384,21 +384,17 @@ async function checkMarketLogic() {
                         let shouldWaitChoch = false;
 
                         if (filterMode === 'STRICT') {
-                            // 🛡️ STRICT MODE: ต้องผ่านครบ 3 ด่าน (PA + IDM + ChoCh)
-                            if (hasIDM && hasChoCh && isFreshBreakout) {
-                                console.log(`   ✅ [STRICT] PA+IDM+ChoCh ผ่านครบ (Fresh Breakout) → เข้าเทรดได้`);
+                            // 🛡️ STRICT MODE: ตัด IDM ออก (ให้ตรงกับ Backtest) เหลือแค่ด่าน PA + ChoCh
+                            if (hasChoCh && isFreshBreakout) {
+                                console.log(`   ✅ [STRICT] PA+ChoCh ผ่านครบ (Fresh Breakout) → เข้าเทรดได้`);
                                 shouldTrigger = true;
-                            } else if (hasIDM && hasChoCh && !isFreshBreakout) {
+                            } else if (hasChoCh && !isFreshBreakout) {
                                 console.log(`   ⏭️  [STRICT] สัญญาณช้าไป (Late Entry) โครงสร้างเบรคไปแล้วตั้งแต่อดีต → รอรอบถัดไป`);
-                            } else if (!hasIDM && hasChoCh) {
-                                console.log(`   ⏭️  [STRICT] ChoCh ✅ แต่ขาด IDM → ตลาดไซด์เวย์ต้องเข้มงวด ไม่เข้าเทรด`);
-                            } else if (hasIDM && !hasChoCh && chochResult.targetPrice) {
-                                console.log(`   ⏳ [STRICT] IDM ✅ + ChoCh Target พบแล้ว (${chochResult.targetPrice.toFixed(2)}) → เข้า WAITING_CHOCH รอ M1 ยืนยัน Break`);
+                            } else if (!hasChoCh && chochResult.targetPrice) {
+                                console.log(`   ⏳ [STRICT] ChoCh Target พบแล้ว (${chochResult.targetPrice.toFixed(2)}) → เข้า WAITING_CHOCH รอ M1 ยืนยัน Break`);
                                 shouldWaitChoch = true;
-                            } else if (hasIDM && !hasChoCh) {
-                                console.log(`   ⏭️  [STRICT] IDM ✅ แต่หา ChoCh Target ไม่เจอ → รอรอบถัดไป`);
                             } else {
-                                console.log(`   ⏭️  [STRICT] ขาดทั้ง IDM และ ChoCh → รอรอบถัดไป`);
+                                console.log(`   ⏭️  [STRICT] หา ChoCh Target ไม่เจอ หรือยังไม่เบรค → รอรอบถัดไป`);
                             }
                         } else {
                             // 🚀 TREND FOLLOWING MODE: ต้องการแค่ ChoCh (H4 trend = IDM ตัวใหญ่แล้ว)
