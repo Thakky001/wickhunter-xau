@@ -26,13 +26,10 @@ const lastCandle = m5Data[m5Data.length - 1];
 const nowMs = (lastCandle.time || lastCandle.epoch) * 1000;
 
 function getPeriodName(timeMs) {
-    const diff = nowMs - timeMs;
-    // We want to analyze by year
-    if (diff <= 12 * ONE_MONTH_MS) return 'Year 1 (Latest)';
-    if (diff <= 24 * ONE_MONTH_MS) return 'Year 2';
-    if (diff <= 36 * ONE_MONTH_MS) return 'Year 3';
-    if (diff <= 48 * ONE_MONTH_MS) return 'Year 4';
-    return 'Year 5 (Oldest)';
+    const d = new Date(timeMs);
+    const year = d.getUTCFullYear();
+    const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+    return `${year}-${month}`;
 }
 
 let currentState = 'SCANNING'; 
@@ -48,13 +45,7 @@ let maxDrawdown = 0;
 let currentDay = -1;
 let dailyLossCount = 0;
 
-let results = {
-    'Year 1 (Latest)': { trades: 0, wins: 0, losses: 0, pnl: 0 },
-    'Year 2': { trades: 0, wins: 0, losses: 0, pnl: 0 },
-    'Year 3': { trades: 0, wins: 0, losses: 0, pnl: 0 },
-    'Year 4': { trades: 0, wins: 0, losses: 0, pnl: 0 },
-    'Year 5 (Oldest)': { trades: 0, wins: 0, losses: 0, pnl: 0 },
-};
+let results = {};
 
 // Fixed Lot Size for Gold (1 lot = 100 oz). 0.02 lot = 2 oz. 
 // So 1 point of movement (e.g., 2000.00 to 2001.00) = $2 PnL
@@ -208,7 +199,22 @@ for (let i = 50; i < m5Data.length; i++) {
         }
     }
     else if (currentState === 'SCANNING') {
-        if (dailyLossCount >= MAX_DAILY_LOSS) continue;
+        // --- [FILTER 1] Session Filter ---
+        // เทรดเฉพาะตลาดยุโรป-อเมริกา (07:00 UTC - 16:00 UTC)
+        const currentHour = new Date(currentTimeMs).getUTCHours();
+        if (currentHour < 7 || currentHour > 16) continue;
+
+        // --- [FILTER 2] Circuit Breaker (Max 3 Loss/Day) ---
+        const d = new Date(currentTimeMs);
+        const dayString = `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}`;
+        if (dayString !== currentDay) {
+            currentDay = dayString;
+            dailyLossCount = 0;
+        }
+
+        if (dailyLossCount >= 3) {
+            continue; // โดนไป 3 ไม้แล้ว วันนี้พอแค่นี้
+        }
 
         const htfTrend = getHTFTrend(h1Slice);
         const fvgs = findFVG(h1Slice, m5Slice);
@@ -255,6 +261,9 @@ for (let i = 50; i < m5Data.length; i++) {
 }
 
 function updateStats(period, isWin, pnl) {
+    if (!results[period]) {
+        results[period] = { trades: 0, wins: 0, losses: 0, pnl: 0 };
+    }
     results[period].trades++;
     if (isWin) results[period].wins++;
     else results[period].losses++;
@@ -265,8 +274,8 @@ console.log('\n📊 === BACKTEST RESULTS WITH CIRCUIT BREAKER (Max Loss: 3/day) 
 
     let cumulativePnL = 0;
     
-    // Reverse the periods array so Year 5 (Oldest) is printed first
-    const periods = Object.keys(results).reverse();
+    // Sort the periods chronologically (e.g., 2021-06, 2021-07...)
+    const periods = Object.keys(results).sort();
     for (const period of periods) {
         const stat = results[period];
         if (stat.trades === 0) continue;

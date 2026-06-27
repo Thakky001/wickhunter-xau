@@ -286,6 +286,13 @@ async function checkMarketLogic() {
                 return;
             }
 
+            const currentHour = new Date().getUTCHours();
+            if (currentHour < 7 || currentHour > 16) {
+                console.log(`⏳ อยู่นอกเวลาเทรดยุโรป-อเมริกา (07:00-16:00 UTC) ข้ามการสแกนหาจุดเข้า...`);
+                isCheckingMarket = false;
+                return;
+            }
+
             let foundPA = false;
             let foundValidSignal = false;
 
