@@ -298,6 +298,15 @@ function startDerivStream() {
         // 3. จัดการ Error แบบ Global (ถ้าไม่ได้ผูกกับ req_id)
         if (response.error && !response.req_id) {
             console.error('❌ Deriv Error:', response.error.message);
+            // [Fix] ถ้ารับ Error ว่าตลาดปิด (เช่น วันหยุดเสาร์-อาทิตย์ หรือช่วงเบรก) ให้ลองสมัครรับราคาใหม่เรื่อยๆ
+            if (response.error.message.toLowerCase().includes('market is presently closed')) {
+                console.log("⏳ ตลาดปิด จะพยายามดึงราคาสด (Tick) ใหม่อีกครั้งใน 1 นาที...");
+                setTimeout(() => {
+                    if (isSocketActive(ws)) {
+                        ws.send(JSON.stringify({ ticks: "frxXAUUSD", subscribe: 1 }));
+                    }
+                }, 60000);
+            }
         }
     });
 
