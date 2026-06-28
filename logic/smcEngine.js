@@ -245,6 +245,32 @@ async function checkMarketLogic() {
 
             const closedM5Candle = m5Candles[m5Candles.length - 2];
             const closedM5Array = m5Candles.slice(0, -1);
+
+            // เช็คสถานะตลาดและเวลาเพื่อส่งไปแสดงบน Dashboard ให้ตรงความจริง
+            let displayState = currentState;
+            const currentFilterHour = new Date().getUTCHours();
+            
+            if (!isMarketOpen()) {
+                displayState = 'SLEEPING (Weekend)';
+            } else if (currentFilterHour < 7 || currentFilterHour > 16) {
+                displayState = 'SLEEPING (Out of Session)';
+            }
+
+            // อัปเดต Dashboard State และ Google Sheets หลังสแกนเสร็จ
+            dashboardState.update({
+                botState: displayState, // ใช้ displayState แทน currentState เพื่อให้ UI รู้ว่ากำลังหลับ
+                zonesFound: { fvg: filteredFvgs.length, ob: filteredObs.length, total: allZones.length },
+                zones: allZones, // ส่งพิกัดกล่องโซนทั้งหมดให้ Frontend
+                tradingRange: tradingRange,
+                activeTrade: activeTrade
+            });
+            sheets.updateBotStatus({
+                state: displayState,
+                zonesFound: allZones.length,
+                lastM5Close: closedM5Candle.close,
+                wsStatus: 'CONNECTED'
+            });
+
             // ─── DEBUG: สรุปผลการสแกนรอบนี้ ───────────────────────────────
             const now = new Date().toLocaleTimeString('th-TH');
             console.log(`\n─────────────────────────────────────────`);
@@ -265,28 +291,12 @@ async function checkMarketLogic() {
             }
             // ───────────────────────────────────────────────────────────────
 
-            // อัปเดต Dashboard State และ Google Sheets หลังสแกนเสร็จ
-            dashboardState.update({
-                botState: currentState,
-                zonesFound: { fvg: filteredFvgs.length, ob: filteredObs.length, total: allZones.length },
-                zones: allZones, // ส่งพิกัดกล่องโซนทั้งหมดให้ Frontend
-                tradingRange: tradingRange,
-                activeTrade: activeTrade
-            });
-            sheets.updateBotStatus({
-                state: currentState,
-                zonesFound: allZones.length,
-                lastM5Close: closedM5Candle.close,
-                wsStatus: 'CONNECTED'
-            });
-
             if (!isMarketOpen()) {
                 console.log(`💤 อัปเดตข้อมูลย้อนหลัง 48 ชม. ลง Dashboard เรียบร้อยแล้ว เข้าสู่โหมดพักผ่อนช่วงสุดสัปดาห์...`);
                 isCheckingMarket = false;
                 return;
             }
 
-            const currentFilterHour = new Date().getUTCHours();
             if (currentFilterHour < 7 || currentFilterHour > 16) {
                 console.log(`⏳ อยู่นอกเวลาเทรดยุโรป-อเมริกา (07:00-16:00 UTC) ข้ามการสแกนหาจุดเข้า...`);
                 isCheckingMarket = false;
