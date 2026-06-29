@@ -44,7 +44,8 @@ function findFVG(candles, m5Candles = []) {
                     name: 'BULLISH_FVG',
                     top: c3.low,
                     bottom: c1.high, // ขอบล่างของโซน
-                    time: c1.time
+                    time: c1.time,
+                    candleIndex: i
                 });
             }
         }
@@ -76,7 +77,8 @@ function findFVG(candles, m5Candles = []) {
                     name: 'BEARISH_FVG',
                     top: c1.low,
                     bottom: c3.high,
-                    time: c1.time
+                    time: c1.time,
+                    candleIndex: i
                 });
             }
         }
@@ -146,7 +148,8 @@ function findOrderBlock(candles, m5Candles = []) {
                         name: 'BULLISH_OB',
                         top: Math.max(prev.open, prev.close),
                         bottom: Math.min(prev.open, prev.close),
-                        time: prev.time
+                        time: prev.time,
+                        candleIndex: i - 1
                     });
                 }
             }
@@ -202,7 +205,8 @@ function findOrderBlock(candles, m5Candles = []) {
                         name: 'BEARISH_OB',
                         top: Math.max(prev.open, prev.close),
                         bottom: Math.min(prev.open, prev.close),
-                        time: prev.time
+                        time: prev.time,
+                        candleIndex: i - 1
                     });
                 }
             }

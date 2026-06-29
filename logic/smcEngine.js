@@ -193,13 +193,11 @@ async function checkMarketLogic() {
             const obs = findOrderBlock(closedH1Candles, m5Candles);
             const allFoundZones = [...fvgs, ...obs];
 
-            // กรองหาเฉพาะโซนที่สดใหม่ย้อนหลังไม่เกินอายุที่กำหนด (ใช้ Timestamp จริง อิงจากแท่งล่าสุดแก้ปัญหาเสาร์อาทิตย์)
-            const latestH1TimeMs = new Date(closedH1Candles[closedH1Candles.length - 1].time * 1000).getTime();
-            const maxAgeMs = ENGINE_CONFIG.MAX_ZONE_AGE_HOURS * 60 * 60 * 1000;
+            // กรองหาเฉพาะโซนที่สดใหม่ย้อนหลังไม่เกินอายุที่กำหนด (ใช้จำนวนแท่งเทียน H1 แทนเวลา เพื่อแก้ปัญหาเสาร์อาทิตย์ที่เวลาเดินแต่ไม่มีแท่งเทียน)
+            const latestH1Index = closedH1Candles.length - 1;
             const allZones = allFoundZones.filter(z => {
-                if (!z.time) return true;
-                const zoneTimeMs = new Date(z.time * 1000).getTime();
-                return (latestH1TimeMs - zoneTimeMs) <= maxAgeMs;
+                if (z.candleIndex === undefined) return true;
+                return (latestH1Index - z.candleIndex) <= ENGINE_CONFIG.MAX_ZONE_AGE_HOURS;
             });
 
             let h4Candles = [];
