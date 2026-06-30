@@ -475,22 +475,6 @@ async function checkMarketLogic() {
                             // [User Request: ซ่อน Alert จุดเตรียมเข้า เพื่อลดความรำคาญ]
                             // await sendSignal(preAlertMsg);
 
-                            dashboardState.addSignal({
-                                type: 'PRE_ALERT',
-                                zone: zone.name,
-                                direction: paResult.direction,
-                                chochTarget: chochResult.targetPrice,
-                                sl: preCalcSL,
-                                time: new Date().toISOString()
-                            });
-                            // sheets.appendSignal({
-                            //     type: 'PRE_ALERT',
-                            //     zone: zone.name,
-                            //     direction: paResult.direction,
-                            //     chochTarget: chochResult.targetPrice,
-                            //     sl: preCalcSL
-                            // });
-
                             break; // ออกจาก zone loop
                         }
 
@@ -656,26 +640,6 @@ async function checkMarketLogic() {
                         lastFallbackCheckAt = 0;
                         currentState = STATES.WAITING_WICK_BREAK;
                         dashboardState.update({ botState: currentState });
-                        dashboardState.addSignal({
-                            type: 'PRE_ALERT',
-                            zone: zone.name,
-                            direction: signalDirection,
-                            entry: referenceWickPrice,
-                            sl: cancelPrice,
-                            tp1: tp1,
-                            tp2: tp2,
-                            time: new Date().toISOString()
-                        });
-                        // sheets.appendSignal({
-                        //     type: 'PRE_ALERT',
-                        //     zone: zone.name,
-                        //     direction: signalDirection,
-                        //     entry: referenceWickPrice,
-                        //     sl: cancelPrice,
-                        //     tp1: tp1,
-                        //     tp2: tp2, // [Bug#2 Fix] เพิ่ม TP2 ใน PRE_ALERT
-                        //     currentPrice: closedM5Candle.close
-                        // });
 
                         const previewMsg = `⏳ <b>เตรียมตัว! พบการกลับตัวในโซน ${zone.name} H1</b>\n\n` +
                             `ดักรอการ <b>เบรกปลายไส้ (M5)</b> ฝั่ง ${signalDirection}\n\n` +
@@ -897,22 +861,7 @@ async function expireWaitingSignal() {
     currentState = STATES.SCANNING;
     console.log(`⌛ [SMC Engine]: PRE_ALERT ${direction} หมดอายุ ระบบกลับไป SCANNING`);
     dashboardState.update({ botState: currentState });
-    dashboardState.addSignal({
-        type: 'EXPIRED',
-        direction,
-        entry,
-        sl,
-        time: new Date().toISOString()
-    });
-    // sheets.appendSignal({
-    //     type: 'EXPIRED',
-    //     direction,
-    //     entry,
-    //     sl
-    // });
     clearActiveSignal();
-
-    // await sendSignal(`⌛ <b>หมดอายุสัญญาณ ${direction}</b>\n\nรอเบรกนานเกิน 15 นาที แต่ราคาไม่ถึง Entry/SL ระบบกลับไปสแกนหาโซนใหม่แล้ว`);
 }
 
 // ─── [M1 ChoCh] หมดเวลารอ ChoCh break จาก M1 ────────────────────────────
@@ -920,23 +869,10 @@ async function expireWaitingChoch() {
     if (currentState !== STATES.WAITING_CHOCH) return;
 
     const direction = pendingChoch ? pendingChoch.direction : signalDirection;
-    const target = pendingChoch ? pendingChoch.chochTargetPrice : 0;
 
     currentState = STATES.SCANNING;
     console.log(`⌛ [SMC Engine]: WAITING_CHOCH ${direction} หมดอายุ ระบบกลับไป SCANNING`);
     dashboardState.update({ botState: currentState });
-
-    dashboardState.addSignal({
-        type: 'EXPIRED',
-        direction,
-        chochTarget: target,
-        time: new Date().toISOString()
-    });
-    // sheets.appendSignal({
-    //     type: 'EXPIRED',
-    //     direction,
-    //     chochTarget: target
-    // });
     clearActiveSignal();
 
     // await sendSignal(`⌛ <b>หมดอายุ WAITING_CHOCH ${direction}</b>\n\nรอ M1 ยืนยัน ChoCh นานเกิน ${ENGINE_CONFIG.CHOCH_WAIT_TIMEOUT_MS / 60000} นาที แต่ราคาไม่ทะลุเป้า ${target > 0 ? target.toFixed(2) : '-'}\nระบบกลับสู่โหมดสแกนหาโซนใหม่...`);
@@ -1145,6 +1081,8 @@ async function processTickData(currentPrice, source = 'tick') {
                     direction: invalidDir,
                     entry: invalidEntry,
                     sl: invalidSL,
+                    tp1: activeTrade.tp1,
+                    tp2: activeTrade.tp2,
                     currentPrice: price,
                     time: new Date().toISOString()
                 });
@@ -1153,6 +1091,8 @@ async function processTickData(currentPrice, source = 'tick') {
                     direction: invalidDir,
                     entry: invalidEntry,
                     sl: invalidSL,
+                    tp1: activeTrade.tp1,
+                    tp2: activeTrade.tp2,
                     currentPrice: price
                 });
                 return;
@@ -1197,6 +1137,8 @@ async function processTickData(currentPrice, source = 'tick') {
                     direction,
                     entry: tp1Entry,
                     sl: tp1Sl,
+                    tp1: tp1Val,
+                    tp2: activeTrade.tp2,
                     currentPrice: price,
                     time: new Date().toISOString()
                 });
@@ -1205,6 +1147,8 @@ async function processTickData(currentPrice, source = 'tick') {
                     direction,
                     entry: tp1Entry,
                     sl: tp1Sl,
+                    tp1: tp1Val,
+                    tp2: activeTrade.tp2,
                     currentPrice: price
                 });
                 return;
@@ -1232,6 +1176,8 @@ async function processTickData(currentPrice, source = 'tick') {
                     direction,
                     entry: tp2Entry,
                     sl: tp2Sl,
+                    tp1: activeTrade.tp1,
+                    tp2: tp2Val,
                     currentPrice: price,
                     time: new Date().toISOString()
                 });
@@ -1240,6 +1186,8 @@ async function processTickData(currentPrice, source = 'tick') {
                     direction,
                     entry: tp2Entry,
                     sl: tp2Sl,
+                    tp1: activeTrade.tp1,
+                    tp2: tp2Val,
                     currentPrice: price
                 });
                 return;
