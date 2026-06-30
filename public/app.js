@@ -8,8 +8,10 @@
 
         function fmtTime(iso) {
             if (!iso) return '—';
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return iso;
             try {
-                return new Date(iso).toLocaleTimeString('th-TH', {
+                return d.toLocaleTimeString('th-TH', {
                     timeZone: 'Asia/Bangkok',
                     hour: '2-digit', minute: '2-digit', second: '2-digit'
                 });
@@ -18,8 +20,10 @@
 
         function fmtDateTime(iso) {
             if (!iso) return '—';
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return iso;
             try {
-                return new Date(iso).toLocaleString('th-TH', {
+                return d.toLocaleString('th-TH', {
                     timeZone: 'Asia/Bangkok',
                     day: '2-digit', month: '2-digit', year: '2-digit',
                     hour: '2-digit', minute: '2-digit', second: '2-digit'
@@ -417,9 +421,15 @@
             `;
         }
 
+        let lastHistoryJson = '';
         function renderHistory(history) {
             const list = $('history-list');
-            const items = history.slice(0, 10);
+            const items = history.slice(-10).reverse();
+            
+            const currentJson = JSON.stringify(items);
+            if (currentJson === lastHistoryJson) return;
+            lastHistoryJson = currentJson;
+
             if (items.length === 0) {
                 list.innerHTML = `<p class="no-history">No signals recorded yet</p>`;
                 return;
