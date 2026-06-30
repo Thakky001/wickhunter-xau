@@ -1523,4 +1523,40 @@ function updateConfig(newConfig) {
     console.log(`\n⚙️ [Config Updated]: H4=${ENGINE_CONFIG.USE_H4_FILTER}, Trailing=${ENGINE_CONFIG.USE_TRAILING_STOP}, CE_Entry=${ENGINE_CONFIG.USE_CE_ENTRY}`);
 }
 
-module.exports = { processTickData, processM1Close, forceScanNow, ENGINE_CONFIG, updateConfig, startSmartSyncLoop };
+function resumeStateFromHistory(signals) {
+    if (!signals || signals.length === 0) return;
+
+    // หา order ที่เป็น TRIGGERED ล่าสุด (หรือ TP1_HIT ล่าสุด)
+    // โดยตรวจสอบว่า order นั้นยังไม่ได้ถูกปิดด้วย TP2_HIT หรือ SL_HIT
+    let activeSignal = null;
+    let hasClosed = false;
+
+    for (let i = signals.length - 1; i >= 0; i--) {
+        const sig = signals[i];
+        if (sig.type === 'TP2_HIT' || sig.type === 'SL_HIT' || sig.type === 'EXPIRED') {
+            hasClosed = true;
+            break; // ถ้าเจอปิด order ไปแล้ว แสดงว่าไม่มี active order
+        }
+        if (sig.type === 'TRIGGERED' || sig.type === 'TP1_HIT') {
+            activeSignal = sig;
+            break;
+        }
+    }
+
+    if (activeSignal && !hasClosed) {
+        // ฟื้นคืนชีพ activeTrade
+        activeTrade = {
+            direction: activeSignal.direction,
+            entry: activeSignal.entry,
+            sl: activeSignal.sl,
+            tp1: activeSignal.tp1,
+            tp2: activeSignal.tp2,
+            isTp1Hit: activeSignal.type === 'TP1_HIT'
+        };
+        currentState = STATES.MONITORING_TRADE;
+        dashboardState.update({ botState: currentState, activeTrade });
+        console.log(`\n🔄 [SMC Engine]: ฟื้นคืนชีพ Order เก่าที่ค้างอยู่ (${activeSignal.type} ${activeTrade.direction} @ ${activeTrade.entry}) -> เข้าสู่สถานะ MONITORING_TRADE`);
+    }
+}
+
+module.exports = { processTickData, processM1Close, forceScanNow, ENGINE_CONFIG, updateConfig, startSmartSyncLoop, resumeStateFromHistory };

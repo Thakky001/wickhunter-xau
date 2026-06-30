@@ -178,4 +178,9 @@ function addSignal(signal) {
     emitter.emit('stateUpdate', state);
 }
 
-module.exports = { state, update, updateWsStatus, addSignal, initTrades, emitter };
+function loadSignalHistory(signals) {
+    state.signalHistory = signals;
+    emitter.emit('stateUpdate', state);
+}
+
+module.exports = { state, update, updateWsStatus, addSignal, initTrades, loadSignalHistory, emitter };

@@ -1,7 +1,8 @@
 const express = require('express');
+const cors = require('cors');
 const keys = require('./config/keys');
 const { startDerivStream } = require('./services/derivWs');
-const { forceScanNow } = require('./logic/smcEngine');
+const smcEngine = require('./logic/smcEngine');
 const dashboardState = require('./services/dashboardState');
 const sheets = require('./services/sheets');
 
@@ -44,7 +45,7 @@ app.get('/status', (req, res) => {
 // Force the bot back to SCANNING and run one scan immediately.
 app.post('/force-scan', async (req, res) => {
     try {
-        const result = await forceScanNow('dashboard');
+        const result = await smcEngine.forceScanNow('dashboard');
         res.json(result);
     } catch (error) {
         console.error('❌ Force scan failed:', error.message);
@@ -105,6 +106,13 @@ app.listen(keys.PORT, async () => {
         const pastTrades = await sheets.loadTradesFromSheet();
         dashboardState.initTrades(pastTrades);
         console.log(`📊 [Sheets]: Sync ประวัติการเทรดย้อนหลังสำเร็จ พบทั้งหมด ${pastTrades.length} ไม้`);
+
+        console.log('🔄 [Sheets]: กำลังดึงประวัติ Signal ล่าสุดเพื่อกู้คืนสถานะ...');
+        const recentSignals = await sheets.getRecentSignals(20);
+        if (recentSignals.length > 0) {
+            dashboardState.loadSignalHistory(recentSignals);
+            smcEngine.resumeStateFromHistory(recentSignals);
+        }
     }
 
     // สั่งให้เปิดท่อ WebSocket รับราคาทองคำทันทีที่รันเซิร์ฟเวอร์เสร็จ

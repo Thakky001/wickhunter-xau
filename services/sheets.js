@@ -204,4 +204,32 @@ async function loadTradesFromSheet() {
     }
 }
 
-module.exports = { init, appendSignal, updateBotStatus, loadTradesFromSheet };
+async function getRecentSignals(limit = 20) {
+    if (!sheetsClient) return [];
+    try {
+        const res = await sheetsClient.spreadsheets.values.get({
+            spreadsheetId,
+            range: 'Signals!A:I'
+        });
+        const rows = res.data.values;
+        if (!rows || rows.length <= 1) return [];
+
+        const dataRows = rows.slice(1).slice(-limit); // เอาแค่ N แถวล่าสุด
+        return dataRows.map(row => ({
+            time: row[0],
+            zone: row[1],
+            direction: row[2],
+            entry: row[3] ? parseFloat(row[3]) : null,
+            sl: row[4] ? parseFloat(row[4]) : null,
+            tp1: row[5] ? parseFloat(row[5]) : null,
+            tp2: row[6] ? parseFloat(row[6]) : null,
+            currentPrice: row[7] ? parseFloat(row[7]) : null,
+            type: row[8]
+        }));
+    } catch (err) {
+        console.warn('⚠️  [Sheets]: getRecentSignals() ล้มเหลว →', err.message);
+        return [];
+    }
+}
+
+module.exports = { init, appendSignal, updateBotStatus, loadTradesFromSheet, getRecentSignals };
