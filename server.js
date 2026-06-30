@@ -1,5 +1,4 @@
 const express = require('express');
-const cors = require('cors');
 const keys = require('./config/keys');
 const { startDerivStream } = require('./services/derivWs');
 const smcEngine = require('./logic/smcEngine');
