@@ -148,7 +148,7 @@ async function checkMarketLogic() {
             return;
         }
 
-        if (currentState === STATES.SCANNING) {
+        // [Fix] Always fetch background data regardless of state so dashboard is populated
             const currentHour = new Date().getUTCHours();
             const currentMinute = new Date().getUTCMinutes();
 
@@ -290,6 +290,7 @@ async function checkMarketLogic() {
             }
             // ───────────────────────────────────────────────────────────────
 
+        if (currentState === STATES.SCANNING) {
             if (!isMarketOpen()) {
                 console.log(`💤 อัปเดตข้อมูลย้อนหลัง 48 ชม. ลง Dashboard เรียบร้อยแล้ว เข้าสู่โหมดพักผ่อนช่วงสุดสัปดาห์...`);
                 isCheckingMarket = false;
