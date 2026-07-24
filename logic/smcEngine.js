@@ -948,7 +948,7 @@ async function checkWaitingGuard() {
     isCheckingWaitingGuard = true;
     lastFallbackCheckAt = now;
     try {
-        console.log("🛰️ [SMC Engine]: Finnhub tick ขาดช่วง → เช็ก M5 จาก TwelveData fallback");
+        console.log("🛰️ [SMC Engine]: Deriv tick ขาดช่วง → เช็ก M5 จาก Deriv API (Fallback)");
         const m5Candles = await getCandles('5', 2);
         if (!m5Candles || m5Candles.length === 0) {
             console.log("⚠️ [SMC Engine]: fallback ไม่สามารถดึงแท่ง M5 ได้");
@@ -1268,7 +1268,7 @@ async function processTickData(currentPrice, source = 'tick') {
         if (currentState === STATES.WAITING_WICK_BREAK) {
             const sourceLabel = source === 'fallback' ? 'FALLBACK' : 'TICK';
             const sourceNote = source === 'fallback'
-                ? '\n\n⚠️ ตรวจพบจาก TwelveData fallback เพราะ Finnhub tick ขาดช่วง'
+                ? '\n\n⚠️ ตรวจพบจาก Fallback (Deriv API) เพราะ WebSocket tick ขาดช่วง'
                 : '';
             console.log(`📡 [${sourceLabel}] ราคาปัจจุบัน: ${price.toFixed(2)} (รอเบรก: ${referenceWickPrice.toFixed(2)})`);
             let isBreakout = false;
