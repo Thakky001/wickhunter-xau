@@ -1,5 +1,5 @@
 const { sendSignal } = require('../services/telegram');
-const { findFVG, findOrderBlock, checkPriceActionInZone, checkRecentPA, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep, checkM1ChochBreak, checkM5BOS, findM5FVG, calculateDynamicBuffers } = require('./smcMath');
+const { findFVG, findOrderBlock, checkPriceActionInZone, checkRecentPA, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep, checkM1ChochBreak, checkM5BOS, findM5FVG, calculateDynamicBuffers, getBrokerOffset } = require('./smcMath');
 const { getCandles } = require('../services/derivWs');
 const dashboardState = require('../services/dashboardState');
 const sheets = require('../services/sheets');
@@ -205,9 +205,10 @@ async function checkMarketLogic() {
             for (let h1 of closedH1Candles) {
                 if (!h1.time) continue;
                 const d = new Date(h1.time * 1000);
-                // [Fix] ปรับเวลาให้ตรงกับ Broker Server (UTC+2 สำหรับ Exness/ICMarkets)
-                const brokerHour = (d.getUTCHours() + ENGINE_CONFIG.BROKER_UTC_OFFSET) % 24;
-                const brokerDate = new Date(d.getTime() + ENGINE_CONFIG.BROKER_UTC_OFFSET * 3600000);
+                // [Fix] ปรับเวลาให้ตรงกับ Broker Server อัตโนมัติตามฤดูกาล (DST)
+                const currentOffset = getBrokerOffset(d);
+                const brokerHour = (d.getUTCHours() + currentOffset) % 24;
+                const brokerDate = new Date(d.getTime() + currentOffset * 3600000);
                 const h4Block = Math.floor(brokerHour / 4) * 4;
                 const key = `${brokerDate.getUTCDate()}-${h4Block}`;
 
@@ -487,7 +488,10 @@ async function checkMarketLogic() {
 
                         // 🌟 โหมด ENTRY_MODE === 'CANDLE_CLOSE' (เข้าทันทีที่ปิดแท่ง PA M5 ยืนยันสัญญาณ)
                         if (ENGINE_CONFIG.ENTRY_MODE === 'CANDLE_CLOSE') {
-                            referenceWickPrice = closedM5Candle.close; // ใช้ราคาปิดเป็นจุดเข้า
+                            // [Fix] รวมค่า Spread เข้าไปในจุดเข้า เพื่อให้สะท้อนต้นทุนจริงเวลา Market Execution
+                            referenceWickPrice = signalDirection === 'BUY' 
+                                ? closedM5Candle.close + getActiveBuffers().spreadBuf 
+                                : closedM5Candle.close - getActiveBuffers().spreadBuf;
 
                             if (ENGINE_CONFIG.SL_MODE === 'SWING_HIGH_LOW') {
                                 const pIndex = paResult.candleIndex;
@@ -689,7 +693,10 @@ async function checkMarketLogic() {
 
                         if (paInFVG.isValid) {
                             console.log(`   ✅ [Continuation] PA rejection ใน FVG ยืนยันทันที! คำนวณ Entry/SL/TP...`);
-                            const entryPrice = closedM5Candle.close;
+                            // [Fix] รวมค่า Spread เข้าไปในจุดเข้า
+                            const entryPrice = bosDirection === 'BUY'
+                                ? closedM5Candle.close + getActiveBuffers().spreadBuf
+                                : closedM5Candle.close - getActiveBuffers().spreadBuf;
                             const sl = bosDirection === 'BUY'
                                 ? fvg.bottom - getActiveBuffers().slBuf
                                 : fvg.top + getActiveBuffers().slBuf + getActiveBuffers().spreadBuf;
@@ -777,7 +784,10 @@ async function checkMarketLogic() {
 
             if (paInFVG.isValid) {
                 console.log(`   ✅ [Continuation] PA Rejection ใน FVG ยืนยัน! → คำนวณ Entry...`);
-                const entryPrice = latestContCandle.close;
+                // [Fix] รวมค่า Spread เข้าไปในจุดเข้า
+                const entryPrice = contDir === 'BUY'
+                    ? latestContCandle.close + getActiveBuffers().spreadBuf
+                    : latestContCandle.close - getActiveBuffers().spreadBuf;
                 const sl = contDir === 'BUY'
                     ? contFvg.bottom - getActiveBuffers().slBuf
                     : contFvg.top + getActiveBuffers().slBuf + getActiveBuffers().spreadBuf;
@@ -1400,7 +1410,10 @@ async function processM1Close(m1Candle) {
     // 🎉 M1 ยืนยัน ChoCh Break!
     console.log(`\n🔥🔥🔥 [M1 ChoCh CONFIRMED] แท่ง M1 ปิดทะลุ ChoCh Target! Direction: ${direction} | Zone: ${zoneName} 🔥🔥🔥`);
 
-    const entryPrice = m1Candle.close;
+    // [Fix] รวมค่า Spread เข้าไปในจุดเข้า
+    const entryPrice = direction === 'BUY'
+        ? m1Candle.close + getActiveBuffers().spreadBuf
+        : m1Candle.close - getActiveBuffers().spreadBuf;
     let sl = preCalcSL;
     let risk = Math.abs(entryPrice - sl);
 

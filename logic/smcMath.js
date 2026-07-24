@@ -694,4 +694,18 @@ function calculateDynamicBuffers(m5Candles, config) {
     };
 }
 
-module.exports = { findFVG, findOrderBlock, checkPriceActionInZone, checkRecentPA, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep, checkM1ChochBreak, checkM5BOS, findM5FVG, calculateATR, calculateDynamicBuffers };
+// [Fix] Dynamic DST Offset (Daylight Saving Time) for US/European brokers
+function getBrokerOffset(date) {
+    const year = date.getUTCFullYear();
+    // US DST: 2nd Sunday in March to 1st Sunday in November
+    let dstStart = new Date(Date.UTC(year, 2, 1)); // March 1st
+    dstStart.setUTCDate(dstStart.getUTCDate() + (7 - dstStart.getUTCDay()) % 7 + 7); // 2nd Sunday
+    
+    let dstEnd = new Date(Date.UTC(year, 10, 1)); // Nov 1st
+    dstEnd.setUTCDate(dstEnd.getUTCDate() + (7 - dstEnd.getUTCDay()) % 7); // 1st Sunday
+
+    const isDST = date >= dstStart && date < dstEnd;
+    return isDST ? 3 : 2; // Exness/ICMarkets is UTC+3 in Summer, UTC+2 in Winter
+}
+
+module.exports = { findFVG, findOrderBlock, checkPriceActionInZone, checkRecentPA, checkChoCh, getHTFTrend, getTradingRange, checkIDMSweep, checkM1ChochBreak, checkM5BOS, findM5FVG, calculateATR, calculateDynamicBuffers, getBrokerOffset };
