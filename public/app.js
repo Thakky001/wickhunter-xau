@@ -446,7 +446,12 @@
                             <div class="history-dir" style="color:${dirColor}">${sig.direction || '—'}</div>
                             <div class="history-time">${fmtDateTime(sig.time)}</div>
                         </div>
-                        <div class="history-entry">Entry: ${fmt(sig.entry)}</div>
+                        <div class="history-entry">
+                            Entry: ${fmt(sig.entry)}
+                            ${sig.sl ? ` | SL: ${fmt(sig.sl)}` : ''}
+                            ${sig.tp1 ? ` | TP1: ${fmt(sig.tp1)}` : ''}
+                            ${sig.tp2 ? ` | TP2: ${fmt(sig.tp2)}` : ''}
+                        </div>
                     </div>
                 `;
             }).join('');

@@ -490,7 +490,7 @@ function checkRecentPA(m5Candles, zone, lookback = 10, depthPct = 0.3) {
 }
 
 // ─── M1 ChoCh Break Confirmation ──────────────────────────────────────────────
-// ยืนยัน ChoCh break จากราคาปิดแท่ง M1 (Finnhub real-time)
+// ยืนยัน ChoCh break จากราคาปิดแท่ง M1 (Deriv real-time)
 // แยกจาก checkChoCh เพราะใช้ TF ต่างกัน: Target จาก M5 Fractal, Break จาก M1 Close
 function checkM1ChochBreak(m1Close, direction, targetPrice, margin = 2.0) {
     if (direction === 'BUY') {

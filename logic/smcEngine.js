@@ -469,7 +469,7 @@ async function checkMarketLogic() {
                                 : chochResult.targetPrice - ENGINE_CONFIG.CHOCH_M1_MARGIN;
 
                             const preAlertMsg = `⏳ <b>เตรียมตัว! พบ PA${filterMode === 'STRICT' ? ' + IDM' : ''} ในโซน ${zone.name} H1</b>\n\n` +
-                                `📊 รอยืนยัน ChoCh จากแท่ง <b>M1 Real-time</b> (Finnhub)\n` +
+                                `📊 รอยืนยัน ChoCh จากแท่ง <b>M1 Real-time</b> (Deriv WebSocket)\n` +
                                 `🎯 เป้า ChoCh: ${chochResult.targetPrice.toFixed(2)} (ต้อง${paResult.direction === 'BUY' ? 'ปิดเหนือ' : 'ปิดใต้'} ${requiredBreakPrice.toFixed(2)})\n\n` +
                                 `📍 SL โดยประมาณ: ${preCalcSL.toFixed(2)}\n` +
                                 `⏱️ หมดเวลาใน: ${ENGINE_CONFIG.CHOCH_WAIT_TIMEOUT_MS / 60000} นาที`;
@@ -1050,7 +1050,7 @@ async function processTickData(currentPrice, source = 'tick') {
             }
 
             const sourceNote = source === 'fallback'
-                ? '\n\n⚠️ ตรวจพบจาก TwelveData fallback'
+                ? '\n\n⚠️ ตรวจพบจาก Deriv API (Fallback)'
                 : '';
 
             if (isSlHit) {
@@ -1236,7 +1236,7 @@ async function processTickData(currentPrice, source = 'tick') {
                 //     currentPrice: price
                 // });
 
-                const sourceNote = source === 'fallback' ? '\n\n⚠️ ตรวจพบจาก TwelveData fallback' : '';
+                const sourceNote = source === 'fallback' ? '\n\n⚠️ ตรวจพบจาก Deriv API (Fallback)' : '';
                 // await sendSignal(`❌ <b>ยกเลิกการรอ ChoCh ${invalidDir}</b>\n\nกราฟผิดทาง ทะลุจุด SL ที่ <b>${invalidSL.toFixed(2)}</b> ก่อนการทำลายโครงสร้าง ChoCh ระบบกลับสู่โหมดสแกนหาโซนใหม่...${sourceNote}`);
                 return;
             }
@@ -1389,7 +1389,7 @@ async function processTickData(currentPrice, source = 'tick') {
 }
 
 // ─── [M1 ChoCh] ประมวลผลแท่ง M1 ที่ปิดแล้ว ────────────────────────────────
-// เรียกจาก Finnhub M1 Candle Builder เมื่อแท่ง M1 ปิด (ทุก 1 นาที)
+// เรียกจาก Deriv M1 Candle Builder เมื่อแท่ง M1 ปิด (ทุก 1 นาที)
 // ใช้สำหรับยืนยัน ChoCh break แบบ real-time
 async function processM1Close(m1Candle) {
     if (currentState !== STATES.WAITING_CHOCH || !pendingChoch) return;
